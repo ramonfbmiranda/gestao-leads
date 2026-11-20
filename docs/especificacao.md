@@ -2,7 +2,7 @@
 
 Documento vivo com o contexto e os requisitos do sistema. É a fonte da verdade do projeto: qualquer mudança de contrato (tabelas, colunas, rotas, parâmetros) é avisada antes e registrada aqui.
 
-Última revisão: 2026-11-18 (revisão 2: CNPJ alfanumérico, score com N/A, convites, fila de enriquecimento, deploy gratuito).
+Última revisão: 2026-11-20 (revisão 3: contrato do CRUD da fase 3: responsáveis, listagem de leads e validação do `config_score`).
 
 ## 1. Visão geral
 
@@ -61,6 +61,8 @@ Nomes em português, `snake_case`, sem acento. Estes nomes são o contrato do si
 - Formato: `^[0-9A-Z]{12}[0-9]{2}$` após remover máscara (`.`, `/`, `-`, espaços) e converter para maiúsculas.
 - Dígitos verificadores: cada caractere vale `código ASCII − 48` (`0`-`9` valem 0-9, `A` vale 17, `B` 18 … `Z` 42). O cálculo é o mesmo módulo 11 do CNPJ numérico: pesos 5,4,3,2,9,8,7,6,5,4,3,2 para o 1º DV e 6,5,4,3,2,9,8,7,6,5,4,3,2 para o 2º; resto < 2 vira 0, senão `11 − resto`.
 - Rejeitar sequências de um único caractere repetido (ex.: `00000000000000`).
+- Planilhas perdem os zeros iniciais de CNPJs numéricos: valores só com dígitos e de 11 a 13 posições recebem zeros à esquerda antes da validação. Valores mais curtos são recusados.
+- O CNPJ de um lead não é editável: ele é a chave da importação. Para corrigir, exclui-se o lead e cadastra-se de novo.
 - Conferir na documentação atual se a BrasilAPI já consulta CNPJ alfanumérico; se não, o enriquecimento marca esses leads como `nao_suportado` (seção 7) sem tratá-los como erro.
 
 ### 4.2 Tipo e função auxiliares
@@ -76,7 +78,7 @@ Nomes em português, `snake_case`, sem acento. Estes nomes são o contrato do si
 
 **`convites`:** `id`, `organizacao_id` (FK, CASCADE), `email` (text, obrigatório, minúsculo), `papel` (CHECK em `admin` ou `membro`, default `membro`), `convidado_por` (FK para `perfis`, SET NULL), `status` (CHECK em `pendente`, `aceito`, `cancelado`), `created_at`, `aceito_em` (timestamptz). Índice único parcial em (`organizacao_id`, `email`) onde `status = 'pendente'`.
 
-**`responsaveis`:** `id`, `organizacao_id` (FK, CASCADE), `nome` (obrigatório), `created_at`, UNIQUE (`organizacao_id`, `nome`). Representa a coluna "Quem mapeou?" da planilha (é um nome, não necessariamente um usuário do sistema).
+**`responsaveis`:** `id`, `organizacao_id` (FK, CASCADE), `nome` (obrigatório, normalizado: sem espaços nas pontas nem repetidos), `created_at`, índice único em (`organizacao_id`, `lower(nome)`), ou seja, "Ana Souza" e "ana souza" são o mesmo responsável. Representa a coluna "Quem mapeou?" da planilha (é um nome, não necessariamente um usuário do sistema).
 
 **`leads`:**
 
@@ -95,7 +97,9 @@ Restrição UNIQUE (`organizacao_id`, `cnpj`). Índices em (`organizacao_id`, `s
 
 Quando uma nota chega em letra (A/B/C…), o número convertido vai na coluna numérica e o texto original fica em `dados_extras.originais.<campo>`.
 
-**`lead_redes_sociais`:** `id`, `lead_id` (FK, CASCADE), `plataforma` (text: `instagram`, `linkedin`, `facebook`, `site`, `outra`), `url` (obrigatório, normalizada), `created_at`, UNIQUE (`lead_id`, `url`). Cada link da célula "Redes Sociais" vira uma linha aqui; o texto original continua em `leads.redes_sociais`. Reimportações **acrescentam** links novos e não removem os existentes.
+**`lead_redes_sociais`:** `id`, `lead_id` (FK, CASCADE), `plataforma` (text: `instagram`, `linkedin`, `facebook`, `site`, `outra`), `url` (obrigatório, normalizada), `created_at`, UNIQUE (`lead_id`, `url`). Cada link da célula "Redes Sociais" vira uma linha aqui; o texto original continua em `leads.redes_sociais`. Reimportações e edições manuais **acrescentam** links novos e não removem os existentes.
+
+Regras de separação dos links: o texto é dividido por espaço, quebra de linha, vírgula, ponto e vírgula e `|`. Só entra o que parece endereço web: e-mails, telefones e `@perfil` ficam apenas no texto original. A URL é normalizada para evitar duplicatas (https, domínio em minúsculas e sem `www.`, sem barra final e sem `#`), com no máximo 20 links por gravação. A plataforma vem do domínio: Instagram, LinkedIn e Facebook pelos seus domínios; outras redes conhecidas (YouTube, TikTok, X, WhatsApp etc.) como `outra`; o resto como `site`.
 
 **`importacoes`:** `id`, `organizacao_id` (FK), `criado_por` (FK para `perfis`, SET NULL), `nome_arquivo`, `mapeamento` (jsonb, o De-Para usado), `total_linhas`, `inseridos`, `atualizados`, `ignorados` (inteiros, default 0), `erros` (jsonb, default `[]`, com linha e motivo), `status` (CHECK em `processando`, `concluida`, `falhou`), `created_at`.
 
@@ -253,6 +257,18 @@ Se a `situacao_cadastral` for **conhecida** e diferente de ativa, `score_compens
 
 Nas faixas, cada par é `[limite_superior_exclusivo, pontos]`; `null` é "acima do anterior". Na equivalência de letras, o valor é o percentual da escala da organização (ex.: com escala 0-10, "B" vira 7,5).
 
+**Como a organização guarda e valida a configuração:**
+
+- `organizacoes.config_score` guarda só o que a organização mudou. A configuração efetiva é o padrão acima mesclado com ela: as seções e os `pesos` são mesclados chave a chave; tabelas (`porte`, faixas, listas e `equivalencia_letras`) são substituídas inteiras quando definidas.
+- `PUT /organizacao` substitui o `config_score` inteiro pelo enviado, que precisa respeitar a estrutura acima:
+  - chaves desconhecidas são recusadas;
+  - pontos, pesos e penalidades vão de 0 a 100;
+  - as faixas têm limites crescentes e terminam em `null`;
+  - CNAEs têm 7 dígitos (a máscara é removida);
+  - UFs são siglas válidas;
+  - letras vão de A a Z.
+- Depois da mescla, os pesos de cada pilar não podem somar zero, e `faixas.alta` precisa ser maior que `faixas.media`.
+
 ## 9. Enriquecimento por CNPJ
 
 Serviço que consulta a BrasilAPI (`https://brasilapi.com.br/api/cnpj/v1/{cnpj}`) e preenche `razao_social`, `porte`, `capital_social`, `cnae_principal`, `data_abertura`, `cidade`, `uf`, `situacao_cadastral` e `enriquecido_em`. Verificar os campos e limites reais na documentação atual antes de implementar.
@@ -276,17 +292,18 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `GET /me` | T | Usuário, perfil e organização; sem perfil, `perfil: null` e `convites_pendentes` |
 | `POST /onboarding` | T | Cria a organização e o perfil `admin` (`nome_organizacao` obrigatório, `nome` opcional); 201 com o mesmo formato de `/me`; 403 sem e-mail confirmado; 409 se já tiver perfil |
 | `POST /convites/:id/aceitar` | T | Aceita convite destinado ao e-mail do usuário e cria o perfil (`nome` opcional); responde no formato de `/me`; 404 se o convite não for dele ou não estiver pendente |
-| `PUT /organizacao` | A | Atualiza nome, escalas e `config_score` |
+| `PUT /organizacao` | A | Atualiza só os campos enviados entre `nome`, escalas (> 0) e `config_score` (validado, seção 8.6); responde a organização |
 | `GET /membros` | A | Lista membros |
 | `POST /membros/convite` | A | Convida por e-mail (`email`, `papel` padrão `membro`); 201 com `{ convite, email_enviado }` |
 | `GET /convites`, `DELETE /convites/:id` | A | Lista e cancela (204) convites pendentes |
-| `GET /responsaveis` | O | Lista responsáveis da organização |
-| `GET /leads` | O | Lista com filtros `status`, `busca`, ordenação `ordem` (`score_compensacao`, `nota_final`, `created_at`), `direcao`, `pagina` e `limite`; padrão: `score_compensacao` decrescente, nulos por último; inclui responsável e redes sociais |
+| `GET /responsaveis` | O | Lista responsáveis da organização, por nome |
+| `POST /responsaveis` | O | Cadastra responsável (`nome`); 201; 409 se o nome já existir (sem diferenciar maiúsculas) |
+| `GET /leads` | O | Lista com filtros `status`, `busca`, ordenação `ordem` (`score_compensacao`, `nota_final`, `created_at`), `direcao` (`asc`, `desc`), `pagina` (a partir de 1) e `limite` (padrão 20, máximo 100); padrão: `score_compensacao` decrescente; nulos (N/A) sempre por último. A `busca` (até 100 caracteres) procura em `nome_lead`, `nome_decisor`, `razao_social` e no CNPJ sem máscara. Responde `{ leads, total, pagina, limite }`; cada lead inclui `responsavel` (`{ id, nome }` ou nulo) e `lead_redes_sociais` |
 | `GET /leads/enriquecimento/status` | O | Progresso da fila de enriquecimento |
-| `GET /leads/:id` | O | Detalhe do lead |
-| `POST /leads` | O | Cadastro manual (valida CNPJ, 409 se já existir na organização) |
-| `PUT /leads/:id` | O | Atualiza campos permitidos (lista branca; valida `status` contra o ENUM) |
-| `DELETE /leads/:id` | O | Exclui o lead |
+| `GET /leads/:id` | O | Detalhe do lead (todas as colunas, `responsavel` e `lead_redes_sociais`) |
+| `POST /leads` | O | Cadastro manual: `cnpj` e `nome_lead` obrigatórios, mais os campos editáveis; 201 com o detalhe; 409 se o CNPJ já existir na organização |
+| `PUT /leads/:id` | O | Atualiza só os campos editáveis enviados (`null` limpa um campo opcional); `cnpj` não é editável (400) |
+| `DELETE /leads/:id` | O | Exclui o lead (204) |
 | `POST /importacoes/preview` | O | Fase 1 da importação (multipart: `arquivo`) |
 | `POST /importacoes` | O | Fase 2: confirma o mapeamento e processa |
 | `GET /importacoes`, `GET /importacoes/:id` | O | Histórico e detalhe (inclui erros por linha) |
@@ -297,6 +314,15 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial |
 
 Rotas fixas como `/leads/enriquecimento/status` e `/leads/recalcular-score` são registradas antes de `/leads/:id`.
+
+**Campos editáveis de um lead** (lista branca de `POST` e `PUT`; outros campos enviados são ignorados):
+
+- textos: `nome_lead` (até 200 caracteres), `nome_decisor` (150), `numero_decisor` (50), `link_cnpj` (500), `redes_sociais` (2000);
+- notas: `calculadora_icp`, `calculadora_midias_sociais` e `nota_final`, números de 0 até a escala da organização (ex.: ICP 15 é recusado numa escala de 0 a 10);
+- `status`, um valor do ENUM;
+- `responsavel_id`, que precisa ser da mesma organização (400 se não for).
+
+Os links do texto de `redes_sociais` são acrescentados em `lead_redes_sociais` (seção 4.3).
 
 ## 11. Frontend (React, Vite, Tailwind)
 
@@ -339,7 +365,7 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 0. **Repositório e documentação:** git, estrutura de pastas e esta especificação.
 1. **Banco:** arquivos de migração SQL (função `set_updated_at`, ENUM, tabelas, constraints, índices, triggers, RLS e revogação de privilégios).
 2. **Backend base:** estrutura de pastas, conexão com o Supabase, middlewares de autenticação, funções SQL de conta, `/`, `/saude`, `/me`, `/onboarding`, membros e convites.
-3. **CRUD:** organização, responsáveis, leads e utilitário de CNPJ alfanumérico com testes.
+3. **CRUD:** organização (com validação do `config_score`), responsáveis, leads (com separação dos links de redes sociais) e utilitário de CNPJ alfanumérico com testes.
 4. **Importação:** preview, confirmação com upsert (função SQL por lote), histórico.
 5. **Score:** motor de score com N/A e testes das funções puras.
 6. **Enriquecimento:** serviço da BrasilAPI e fila em segundo plano.
@@ -367,4 +393,7 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 - **LGPD:** nome e telefone do decisor são dados pessoais; avaliar aviso de privacidade e exclusão a pedido antes de abrir para clientes reais.
 - **E-mails do Supabase Auth:** o envio padrão do plano gratuito tem limite baixo por hora e serve para testes. Para usuários reais (confirmação de cadastro e convites), configurar um SMTP próprio com plano gratuito na fase 10.
 - **Remoção de membros e troca de papel:** ainda sem rota; definir regras (por exemplo, impedir remover o último admin) antes de implementar.
+- **Remoção de links de redes sociais:** os links só são acrescentados; um link digitado errado continua em `lead_redes_sociais`. Avaliar uma rota de exclusão de link na fase 8.
+- **Busca sem acento:** a busca de leads diferencia acentos ("sao" não encontra "São"). Avaliar a extensão `unaccent` se fizer falta.
+- **Responsáveis:** sem rota para renomear ou excluir no MVP.
 - **Idioma da interface:** português do Brasil.
