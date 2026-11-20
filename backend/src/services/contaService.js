@@ -1,21 +1,14 @@
 import { supabase } from '../config/supabase.js';
 import { acessoNegado, resultadoOuErro, traduzirErroBanco } from '../utils/erros.js';
+import { buscarOrganizacao } from './organizacaoService.js';
 
 const COLUNAS_PERFIL = 'id, organizacao_id, nome, papel, created_at';
-const COLUNAS_ORGANIZACAO =
-  'id, nome, escala_icp_max, escala_midias_max, escala_nota_max, config_score, created_at, updated_at';
 
 const MENSAGEM_JA_TEM_ORGANIZACAO = 'Usuário já pertence a uma organização';
 
 export async function buscarPerfil(usuarioId) {
   return resultadoOuErro(
     await supabase.from('perfis').select(COLUNAS_PERFIL).eq('id', usuarioId).maybeSingle(),
-  );
-}
-
-async function buscarOrganizacao(organizacaoId) {
-  return resultadoOuErro(
-    await supabase.from('organizacoes').select(COLUNAS_ORGANIZACAO).eq('id', organizacaoId).single(),
   );
 }
 

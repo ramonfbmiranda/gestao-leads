@@ -10,7 +10,8 @@
     "dev": "node --watch --env-file=.env src/server.js",
     "start": "node src/server.js",
     "test": "node scripts/testar.js run",
-    "test:watch": "node scripts/testar.js"
+    "test:watch": "node scripts/testar.js",
+    "verificar": "node --env-file=.env scripts/verificar-api.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.119.2",
