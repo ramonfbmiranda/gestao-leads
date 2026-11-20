@@ -326,7 +326,7 @@ Os links do texto de `redes_sociais` são acrescentados em `lead_redes_sociais` 
 
 ## 11. Frontend (React, Vite, Tailwind)
 
-A aplicação tem um serviço de API (axios) com URL base do `.env` e um interceptor que anexa o token da sessão do Supabase Auth. As funções do serviço correspondem exatamente às rotas da seção 10.
+A aplicação tem um serviço de API (axios) com URL base do `.env` e um interceptor que anexa o token da sessão do Supabase Auth. As funções do serviço correspondem exatamente às rotas da seção 10. O visual (layout, cores e componentes) segue o protótipo aprovado na fase 7.
 
 **Telas:**
 
@@ -348,7 +348,7 @@ O Supabase sozinho não hospeda o backend Express: ele oferece banco, autentica�
 | Backend | Render (Web Service Free) | "Dorme" após ~15 min sem requisições e leva ~1 min para acordar; a fila retoma sozinha (seção 9) |
 | Frontend | Cloudflare Pages ou Vercel (Hobby) | Site estático gerado pelo Vite |
 
-Os limites dos planos gratuitos mudam; conferir as condições atuais na fase 10, antes de publicar. Alternativa ao Render, caso mude: Koyeb (plano gratuito).
+Os limites dos planos gratuitos mudam; conferir as condições atuais na fase 11, antes de publicar. Alternativa ao Render, caso mude: Koyeb (plano gratuito).
 
 ## 13. Variáveis de ambiente
 
@@ -369,10 +369,11 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 4. **Importação:** preview, confirmação com upsert (função SQL por lote), histórico.
 5. **Score:** motor de score com N/A e testes das funções puras.
 6. **Enriquecimento:** serviço da BrasilAPI e fila em segundo plano.
-7. **Frontend base:** projeto Vite, Tailwind, rotas, autenticação, onboarding e serviço de API.
-8. **Telas:** lista, detalhe, importação, configurações.
-9. **Dashboard** e rota de resumo.
-10. **Endurecimento e deploy:** CORS, limites, backups, variáveis seguras e publicação (seção 12).
+7. **Protótipo visual:** mockup navegável de todas as telas da seção 11, com dados fictícios (incluindo N/A e score parcial), validado antes de qualquer código de frontend. Define layout, cores, componentes e fluxos.
+8. **Frontend base:** projeto Vite, Tailwind, rotas, autenticação, onboarding e serviço de API, seguindo o protótipo aprovado.
+9. **Telas:** lista, detalhe, importação, configurações.
+10. **Dashboard** e rota de resumo.
+11. **Endurecimento e deploy:** CORS, limites, backups, variáveis seguras e publicação (seção 12).
 
 ## 15. Convenções de desenvolvimento
 
@@ -391,9 +392,9 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 - **Pesos e faixas do score:** os valores da seção 8 são provisórios; ajustar com a realidade de cada empresa.
 - **Valores de porte da BrasilAPI e suporte a CNPJ alfanumérico:** confirmar na fase 6.
 - **LGPD:** nome e telefone do decisor são dados pessoais; avaliar aviso de privacidade e exclusão a pedido antes de abrir para clientes reais.
-- **E-mails do Supabase Auth:** o envio padrão do plano gratuito tem limite baixo por hora e serve para testes. Para usuários reais (confirmação de cadastro e convites), configurar um SMTP próprio com plano gratuito na fase 10.
+- **E-mails do Supabase Auth:** o envio padrão do plano gratuito tem limite baixo por hora e serve para testes. Para usuários reais (confirmação de cadastro e convites), configurar um SMTP próprio com plano gratuito na fase 11.
 - **Remoção de membros e troca de papel:** ainda sem rota; definir regras (por exemplo, impedir remover o último admin) antes de implementar.
-- **Remoção de links de redes sociais:** os links só são acrescentados; um link digitado errado continua em `lead_redes_sociais`. Avaliar uma rota de exclusão de link na fase 8.
+- **Remoção de links de redes sociais:** os links só são acrescentados; um link digitado errado continua em `lead_redes_sociais`. Avaliar uma rota de exclusão de link na fase 9.
 - **Busca sem acento:** a busca de leads diferencia acentos ("sao" não encontra "São"). Avaliar a extensão `unaccent` se fizer falta.
 - **Responsáveis:** sem rota para renomear ou excluir no MVP.
 - **Idioma da interface:** português do Brasil.
