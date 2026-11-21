@@ -13,9 +13,24 @@ coverage/
 supabase/.temp/
 supabase/.branches/
 
+# CLIs de deploy (vínculo local com o projeto)
+.vercel/
+.wrangler/
+
+# Planilhas de leads: dados reais de empresas e contatos (LGPD)
+*.xlsx
+*.xls
+*.ods
+*.csv
+
+# Caches de ferramentas
+.eslintcache
+
 # Sistema e editor
 .DS_Store
 Thumbs.db
 *.log
+*.swp
+.idea/
 .vscode/*
 !.vscode/extensions.json
