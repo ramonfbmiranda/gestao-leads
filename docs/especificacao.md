@@ -2,13 +2,15 @@
 
 Documento vivo com o contexto e os requisitos do sistema. É a fonte da verdade do projeto: qualquer mudança de contrato (tabelas, colunas, rotas, parâmetros) é avisada antes e registrada aqui.
 
-Última revisão: 2026-11-20 (revisão 6: enriquecimento pela BrasilAPI, fila no banco e capital social zero como N/A).
+Última revisão: 2026-11-21 (revisão 7: motor de compensação no centro, com avaliação do lead feita no sistema, perfil ideal, esforço por canais e interações, confiança, sugestões, estimativa em reais e aprendizado com os desfechos).
 
 ## 1. Visão geral
 
 Plataforma web multiempresa (SaaS): cada empresa cliente cria uma conta, importa suas planilhas de prospecção ("Projeto de Leads"), gerencia os leads em um funil de vendas e vê um ranking dos leads que mais compensam ser trabalhados. Cada empresa enxerga somente os próprios dados.
 
 **O foco principal do sistema** é medir o nível de compensação de conquistar cada lead. Compensação é retorno esperado versus esforço, calculada a partir das informações da planilha e de dados públicos obtidos pelo CNPJ. A nota que vem da planilha mede apenas fit com o perfil ideal e presença digital; o sistema deve ir além e responder "vale a pena correr atrás deste lead?".
+
+A gestão do funil (status, responsáveis, importação, interações) é um complemento: ela organiza o trabalho e alimenta o aprendizado do motor, mas não é o objetivo principal. A base do cálculo é uma avaliação que a equipe responde no próprio sistema, somada aos dados públicos obtidos pelo CNPJ.
 
 ## 2. Decisões de arquitetura
 
@@ -20,6 +22,7 @@ Plataforma web multiempresa (SaaS): cada empresa cliente cria uma conta, importa
 - **CNPJ alfanumérico é o formato principal.** Armazenado com 14 caracteres, sem máscara, em maiúsculas: 12 caracteres alfanuméricos (`0-9`, `A-Z`) seguidos de 2 dígitos verificadores numéricos. O CNPJ numérico antigo é um caso particular do mesmo formato e é aceito sem tratamento especial. Validado pelos dígitos verificadores (seção 4.1) e único por organização (não no sistema inteiro).
 - **Importar significa upsert** por (`organizacao_id`, `cnpj`): atualiza quem já existe, insere quem é novo, nunca apaga dados de enriquecimento ou de score, e **célula vazia na planilha não apaga valor existente**. Cada importação é registrada em histórico.
 - **Dado insuficiente é "N/A", nunca um número inventado.** Quando falta informação para um fator ou pilar do score, ele fica nulo (exibido como "N/A") e o score é marcado como parcial (seção 8).
+- **A avaliação feita no sistema prevalece sobre a planilha.** A equipe responde no sistema um questionário sobre o lead (modelo padrão de perguntas, editável por organização), e o encaixe no perfil ideal é calculado com os dados da Receita. As notas da planilha continuam aceitas e só valem quando o sistema não tem como calcular aquele fator (seção 8.3).
 - **O frontend nunca acessa as tabelas diretamente.** Toda leitura e escrita de dados passa pela API Express. O frontend usa o Supabase apenas para autenticação.
 - **Isolamento entre empresas é garantido no backend:** o `organizacao_id` é sempre obtido do usuário autenticado e nunca de parâmetros enviados pelo cliente.
 - **Tudo em plano gratuito.** Nenhum serviço pago na stack ou no deploy (seção 12).
@@ -89,17 +92,24 @@ Nomes em português, `snake_case`, sem acento. Estes nomes são o contrato do si
 | Funil | `status` (`status_lead`, NOT NULL, default `novo`) |
 | Enriquecimento (opcionais) | `razao_social`, `porte`, `capital_social` (numeric(16,2)), `cnae_principal`, `data_abertura` (date), `cidade`, `uf` (char(2)), `situacao_cadastral`, `enriquecido_em` (timestamptz) |
 | Fila de enriquecimento | `enriquecimento_status` (text, CHECK em `pendente`, `processando`, `concluido`, `nao_encontrado`, `nao_suportado`, `erro`; nulo = nunca solicitado), `enriquecimento_tentativas` (int, default 0), `enriquecimento_erro` (text), `enriquecimento_proxima_em` (timestamptz: para `pendente`, quando pode ser tentado; para `processando`, o prazo da reserva) |
-| Score (0 a 100, CHECK, nulo = N/A) | `score_valor`, `score_probabilidade`, `score_esforco`, `score_compensacao` (numeric(5,2)), `score_parcial` (boolean, NOT NULL, default false), `score_detalhes` (jsonb), `score_calculado_em` (timestamptz) |
+| Score (0 a 100, CHECK, nulo = N/A) | `score_valor`, `score_probabilidade`, `score_esforco`, `score_compensacao`, `score_confianca` (numeric(5,2); a confiança entra na revisão 7, seção 8.9), `score_parcial` (boolean, NOT NULL, default false), `score_detalhes` (jsonb), `score_calculado_em` (timestamptz) |
+| Contato do decisor (opcionais, revisão 7) | `email_decisor` (text), `linkedin_decisor` (text) |
+| Contatos e sócios da Receita (revisão 7) | `telefone_receita` (text, só dígitos), `email_receita` (text), `socios` (jsonb, `[{ nome, qualificacao }]`, até 20, seção 9.1), `ultima_mudanca_receita` (jsonb ou nulo: `{ em, mudancas: [{ campo, de, para }] }`) |
+| Avaliação (revisão 7, seção 8.8) | `avaliacao` (jsonb ou nulo: `{ respostas: { <pergunta>: <opção> } }`), `ticket_estimado` (numeric(14,2), CHECK ≥ 0), `avaliado_em` (timestamptz), `avaliado_por` (FK para `perfis`, SET NULL) |
+| Resumo das interações (revisão 7) | `ultima_interacao_em` (timestamptz), `tentativas_sem_resposta` (int, NOT NULL, default 0), mantidos pelo backend a cada interação registrada ou excluída |
+| Desfecho (revisão 7, seção 8.10) | `motivo_descarte` (text), `desfecho_em` (timestamptz), `desfecho_score` (jsonb: cópia das colunas de score e de `score_detalhes` no momento do desfecho) |
 | Flexibilidade | `dados_extras` (jsonb, NOT NULL, default `{}`), `ultima_importacao_id` (FK para `importacoes`, ON DELETE SET NULL) |
 | Controle | `created_at`, `updated_at` |
 
-Restrição UNIQUE (`organizacao_id`, `cnpj`). Índices em (`organizacao_id`, `score_compensacao` DESC NULLS LAST), (`organizacao_id`, `status`), (`responsavel_id`) e índices parciais da fila: (`organizacao_id`, `enriquecimento_proxima_em`) onde `pendente` e (`enriquecimento_proxima_em`) onde `processando`.
+Restrição UNIQUE (`organizacao_id`, `cnpj`). Índices em (`organizacao_id`, `score_compensacao` DESC NULLS LAST), (`organizacao_id`, `status`), (`responsavel_id`) e índices parciais da fila: (`organizacao_id`, `enriquecimento_proxima_em`) onde `pendente` e (`enriquecimento_proxima_em`) onde `processando`. Na revisão 7: (`organizacao_id`, `ultima_interacao_em`) para a fila de prioridade e (`enriquecido_em`) para a reconsulta periódica.
 
 Quando uma nota chega em letra (A/B/C…), o número convertido vai na coluna numérica e o texto original fica em `dados_extras.originais.<campo>`.
 
 **`lead_redes_sociais`:** `id`, `lead_id` (FK, CASCADE), `plataforma` (text: `instagram`, `linkedin`, `facebook`, `site`, `outra`), `url` (obrigatório, normalizada), `created_at`, UNIQUE (`lead_id`, `url`). Cada link da célula "Redes Sociais" vira uma linha aqui; o texto original continua em `leads.redes_sociais`. Reimportações e edições manuais **acrescentam** links novos e não removem os existentes.
 
 Regras de separação dos links: o texto é dividido por espaço, quebra de linha, vírgula, ponto e vírgula e `|`. Só entra o que parece endereço web: e-mails, telefones e `@perfil` ficam apenas no texto original. A URL é normalizada para evitar duplicatas (https, domínio em minúsculas e sem `www.`, sem barra final e sem `#`), com no máximo 20 links por gravação. A plataforma vem do domínio: Instagram, LinkedIn e Facebook pelos seus domínios; outras redes conhecidas (YouTube, TikTok, X, WhatsApp etc.) como `outra`; o resto como `site`.
+
+**`interacoes`** (revisão 7): `id`, `organizacao_id` (FK, CASCADE), `lead_id` (FK composta com `organizacao_id` para `leads`, CASCADE), `perfil_id` (FK para `perfis`, SET NULL: quem registrou), `tipo` (CHECK em `ligacao`, `whatsapp`, `email`, `reuniao`, `visita`, `outro`), `teve_resposta` (boolean, NOT NULL), `observacao` (text, até 2.000 caracteres), `ocorreu_em` (timestamptz, NOT NULL, default `now()`, não pode estar no futuro), `created_at`. Índice em (`lead_id`, `ocorreu_em` DESC). `leads.tentativas_sem_resposta` conta as interações seguidas sem resposta, da mais recente para trás, até a última que teve resposta.
 
 **`importacoes`:** `id`, `organizacao_id` (FK), `criado_por` (FK para `perfis`, SET NULL), `nome_arquivo`, `mapeamento` (jsonb, o De-Para usado), `total_linhas`, `inseridos`, `atualizados`, `ignorados` (inteiros, default 0), `erros` (jsonb, default `[]`, com linha e motivo), `status` (CHECK em `processando`, `concluida`, `falhou`), `created_at`.
 
@@ -117,8 +127,10 @@ Regras de separação dos links: o texto é dividido por espaço, quebra de linh
 | Calculadora - Mídias Sociais | `calculadora_midias_sociais` |
 | Nota final | `nota_final` |
 | Quem mapeou? | `responsavel_id` (via `responsaveis.nome`) |
+| E-mail do Decisor (opcional, revisão 7) | `email_decisor` |
+| LinkedIn do Decisor (opcional, revisão 7) | `linkedin_decisor` |
 
-Obrigatórios no mapeamento: `cnpj` e `nome_lead`.
+Obrigatórios no mapeamento: `cnpj` e `nome_lead`. A avaliação do lead (seção 8.8) não vem da planilha: é respondida no sistema, e uma reimportação nunca a apaga.
 
 ## 5. Segurança e multiempresa
 
@@ -231,28 +243,34 @@ A média geométrica mantém a escala 0-100 (valor 70 e probabilidade 70 dão 70
 
 | Fator | Peso | Pontuação padrão |
 | --- | --- | --- |
-| Porte | 40% | Micro empresa 30, Pequeno porte 60, Demais 100. A BrasilAPI devolve `MICRO EMPRESA`, `EMPRESA DE PEQUENO PORTE`, `DEMAIS` ou `NÃO INFORMADO` (este último fica N/A) |
-| Capital social | 35% | < 10 mil: 10; < 100 mil: 30; < 500 mil: 50; < 1 mi: 70; < 5 mi: 85; ≥ 5 mi: 100. Capital zero é N/A (seção 8.5) |
+| Porte | 45% | Micro empresa 30, Pequeno porte 60, Demais 100. A BrasilAPI devolve `MICRO EMPRESA`, `EMPRESA DE PEQUENO PORTE`, `DEMAIS` ou `NÃO INFORMADO` (este último fica N/A) |
+| Capital social | 40% | < 10 mil: 10; < 100 mil: 30; < 500 mil: 50; < 1 mi: 70; < 5 mi: 85; ≥ 5 mi: 100. Capital zero é N/A (seção 8.5) |
 | Idade da empresa (`data_abertura`) | 15% | < 1 ano: 20; 1-3: 40; 3-5: 60; 5-10: 80; ≥ 10: 100 |
-| CNAE prioritário | 10% | 100 se o CNAE principal estiver na lista da organização, 0 se não; desligado se a lista estiver vazia |
+
+Até a revisão 6 o valor tinha um quarto fator, o CNAE prioritário. Ele mede encaixe no perfil de cliente, não quanto a empresa pode render, então foi redirecionado para o critério "setor" do perfil ideal (seção 8.7).
 
 **`score_probabilidade` (chance de fechar), 0-100:**
 
-| Fator | Peso |
-| --- | --- |
-| `calculadora_icp` normalizada pela `escala_icp_max` | 65% |
-| `calculadora_midias_sociais` normalizada pela `escala_midias_max` | 35% |
+| Fator | Peso | De onde vem |
+| --- | --- | --- |
+| `icp` (encaixe no perfil ideal) | 35% | Calculado pelo sistema com o perfil ideal da organização e os dados da Receita (seção 8.7). Sem perfil ideal configurado, ou sem dados para calculá-lo, usa `calculadora_icp` normalizada pela `escala_icp_max` |
+| `qualificacao` | 40% | Bloco "qualificação" da avaliação do lead (seção 8.8). N/A enquanto o lead não for avaliado |
+| `midias_sociais` | 25% | Bloco "mídias" da avaliação. Sem nenhuma resposta nesse bloco, usa `calculadora_midias_sociais` normalizada pela `escala_midias_max` |
+
+**Regra de origem:** o que o sistema calcula ou a equipe responde no sistema prevalece sobre a nota da planilha, que continua aceita como alternativa (importação e cadastro). Cada fator registra a `origem` (`sistema`, `avaliacao` ou `planilha`) em `score_detalhes`. Um lead sem avaliação e sem perfil ideal configurado é calculado exatamente como na revisão 6.
 
 **`score_esforco` (dificuldade de conquistar), 0-100, soma de penalidades limitada a 100:**
 
-| Penalidade | Padrão |
-| --- | --- |
-| Sem número do decisor | +35 |
-| Sem nome do decisor | +25 |
-| Sem nenhuma rede social nem site | +20 |
-| UF fora das `ufs_atendidas` (só se a lista estiver configurada e a UF for conhecida) | +20 |
+| Penalidade | Padrão | Regra |
+| --- | --- | --- |
+| `contato_decisor` | até +35 | O melhor canal disponível reduz a penalidade: telefone do decisor (`numero_decisor`) tira 100%, e-mail do decisor 60%, LinkedIn do decisor 40%, só telefone ou e-mail da empresa pela Receita 20%. Sem nenhum canal, +35. Substitui o antigo "sem número do decisor" |
+| `sem_nome_decisor` | +25 | Sem nome do decisor. Se a Receita indicar um decisor provável entre os sócios (seção 9.1), a penalidade cai 50% (padrão) |
+| `sem_redes_sociais` | +20 | Sem links em `lead_redes_sociais` e sem `@perfil` no texto original |
+| `fora_ufs_atendidas` | +20 | Só com a lista `ufs_atendidas` configurada e a UF conhecida |
+| Bloco "relacionamento" da avaliação | por resposta | Cada pergunta do bloco soma os pontos da opção escolhida. Padrão: "Como o lead chegou até vocês?" com frio +20, indicação +5, já conversamos 0, ex-cliente 0. Sem resposta: N/A |
+| `tentativas_sem_resposta` | +5 por tentativa | Tentativas de contato seguidas sem resposta (tabela `interacoes`) além das 2 toleradas, até +30 |
 
-Acesso ao decisor e presença digital entram **apenas** no esforço, para não penalizar o mesmo fato duas vezes. O esforço sempre pode ser calculado, porque mede a ausência de dados de contato.
+Cada fato entra num pilar só: a existência de canais de contato e as tentativas sem resposta só no esforço; a qualidade da presença digital (checklist de mídias) só na probabilidade. O esforço fica parcial apenas quando falta a UF (com lista configurada) ou a resposta de uma pergunta do bloco relacionamento.
 
 ### 8.4 Situação cadastral
 
@@ -262,20 +280,28 @@ Se a `situacao_cadastral` for **conhecida** e diferente de ativa, `score_compens
 
 - **`score_detalhes` (jsonb):**
   ```
-  { versao, config_em, formula ("media_geometrica" | "pilar_unico" | "na"), faixa ("alta" | "media" | "baixa" | "na"),
+  { versao (2 a partir da revisão 7), config_em, formula ("media_geometrica" | "pilar_unico" | "na"), faixa ("alta" | "media" | "baixa" | "na"),
     compensacao_sem_limite, limite_situacao ({ situacao, limite } ou null), motivos_parcial: [texto],
-    valor:         { valor, parcial, fatores: [{ fator, rotulo, peso, situacao, valor_bruto, pontos, peso_efetivo, contribuicao, motivo? }] },
+    confianca:     { valor, com_dado, total },
+    valor:         { valor, parcial, fatores: [{ fator, rotulo, peso, situacao, origem, valor_bruto, pontos, peso_efetivo, contribuicao, motivo?, itens? }] },
     probabilidade: { valor, parcial, fatores: [...] },
-    esforco:       { valor, parcial, penalidades: [{ penalidade, rotulo, pontos, situacao, aplicada, motivo? }] } }
+    esforco:       { valor, parcial, penalidades: [{ penalidade, rotulo, pontos, maximo, situacao, aplicada, motivo?, detalhe? }] },
+    sugestoes:     [{ acao, rotulo, compensacao_simulada, faixa_simulada, ganho }],
+    financeiro:    { ticket, origem_ticket, chance, origem_chance, valor_esperado, horas, valor_por_hora, motivo? } }
   ```
   - `situacao` de um fator: `ok`, `na` (falta dado do lead) ou `desligado` (peso zero ou lista vazia na configuração).
+  - `origem` de um fator: `sistema` (calculado pelo sistema), `avaliacao` (respostas da equipe) ou `planilha` (nota importada ou digitada).
+  - `itens` (fatores `icp` de origem `sistema`, `qualificacao` e `midias_sociais` de origem `avaliacao`): os critérios ou as perguntas que formaram o fator, cada um com `id`, `rotulo`, `resposta` (quando houver), `pontos` (nulo = N/A) e `peso`.
+  - `pontos` de uma penalidade é o valor efetivamente aplicado (depois das reduções) e `maximo` o configurado; `detalhe` explica a conta (ex.: "Melhor canal: e-mail do decisor (−60%)"). As perguntas do bloco relacionamento viram penalidades com id `relacionamento:<pergunta>`.
   - `peso_efetivo` é o percentual depois da redistribuição dos N/A.
   - `config_em` é o `updated_at` da organização no momento do cálculo. Se a organização mudou depois, o score está desatualizado.
 - **Recálculo automático:**
   - no cadastro manual;
   - na edição de `calculadora_icp`, `calculadora_midias_sociais`, `nome_decisor`, `numero_decisor` ou `redes_sociais`;
   - no fim de cada importação (leads da importação);
-  - no enriquecimento (fase 6).
+  - no enriquecimento (fase 6);
+  - na avaliação do lead e no registro ou exclusão de uma interação (revisão 7);
+  - na edição de `email_decisor` ou `linkedin_decisor` (revisão 7).
 
   Se o recálculo falhar, a operação principal continua válida, o erro vai para o log e o score pode ser refeito pela rota de lote. Depois de mudar escalas ou `config_score`, o frontend chama `POST /leads/recalcular-score`. O recálculo não é automático no `PUT /organizacao` para não deixar o salvamento lento em organizações grandes.
 - **Faixas de exibição:** alta (70 ou mais), média (40 a 69), baixa (abaixo de 40) e N/A (nulo).
@@ -295,20 +321,33 @@ Se a `situacao_cadastral` for **conhecida** e diferente de ativa, `score_compens
 ```json
 {
   "valor": {
-    "pesos": { "porte": 40, "capital_social": 35, "idade": 15, "cnae": 10 },
+    "pesos": { "porte": 45, "capital_social": 40, "idade": 15 },
     "porte": { "MICRO EMPRESA": 30, "EMPRESA DE PEQUENO PORTE": 60, "DEMAIS": 100 },
     "capital_social_faixas": [[10000, 10], [100000, 30], [500000, 50], [1000000, 70], [5000000, 85], [null, 100]],
-    "idade_faixas": [[1, 20], [3, 40], [5, 60], [10, 80], [null, 100]],
-    "cnaes_prioritarios": []
+    "idade_faixas": [[1, 20], [3, 40], [5, 60], [10, 80], [null, 100]]
   },
-  "probabilidade": { "pesos": { "icp": 65, "midias_sociais": 35 } },
+  "probabilidade": { "pesos": { "icp": 35, "qualificacao": 40, "midias_sociais": 25 } },
+  "perfil_ideal": {
+    "pesos": { "setor": 50, "porte": 30, "idade": 20 },
+    "setores": [],
+    "portes": [],
+    "idade_minima": null
+  },
   "esforco": {
-    "sem_numero_decisor": 35,
+    "contato_decisor": 35,
+    "reducao_canais": { "telefone_decisor": 100, "email_decisor": 60, "linkedin_decisor": 40, "contato_empresa": 20 },
     "sem_nome_decisor": 25,
+    "reducao_decisor_provavel": 50,
     "sem_redes_sociais": 20,
     "fora_ufs_atendidas": 20,
-    "ufs_atendidas": []
+    "ufs_atendidas": [],
+    "tentativas": { "toleradas": 2, "pontos_por_tentativa": 5, "maximo": 30 }
   },
+  "avaliacao": { "perguntas": ["(modelo padrão da seção 8.8)"] },
+  "financeiro": { "ticket_por_porte": {}, "horas_esforco_zero": null, "horas_esforco_maximo": null },
+  "prioridade": { "dias_espera": 2, "dias_retomar": 7 },
+  "reconsulta_dias": 90,
+  "motivos_descarte": ["Sem orçamento", "Sem interesse", "Já tem fornecedor", "Não conseguimos contato", "Fora do perfil", "Outro"],
   "situacao_inativa_limite": 10,
   "faixas": { "alta": 70, "media": 40 },
   "equivalencia_letras": { "A": 100, "B": 75, "C": 50, "D": 25, "E": 0 }
@@ -328,6 +367,116 @@ Nas faixas, cada par é `[limite_superior_exclusivo, pontos]`; `null` é "acima 
   - UFs são siglas válidas;
   - letras vão de A a Z.
 - Depois da mescla, os pesos de cada pilar não podem somar zero, e `faixas.alta` precisa ser maior que `faixas.media`.
+
+**Chaves novas da revisão 7** (mesma mescla: seções e objetos de pesos e reduções chave a chave; listas, `ticket_por_porte`, `tentativas` e `avaliacao` substituídos inteiros):
+
+- `perfil_ideal`: `setores` são CNAEs de 7 dígitos; `portes` são rótulos de porte da tabela `valor.porte`; `idade_minima` é um número de anos > 0 ou `null`; pesos de 0 a 100.
+- `esforco`: pontos e reduções de 0 a 100; `tentativas` com inteiros ≥ 0 (`maximo` até 100).
+- `avaliacao`: regras na seção 8.8.
+- `financeiro`: `ticket_por_porte` com rótulos de porte e valores ≥ 0; horas > 0 ou `null`, com `horas_esforco_maximo` ≥ `horas_esforco_zero` quando os dois existem.
+- `prioridade`: inteiros de 0 a 365. `reconsulta_dias`: inteiro de 0 (desliga) a 3650.
+- `motivos_descarte`: de 1 a 20 textos únicos de até 60 caracteres.
+
+**Migração das configurações gravadas antes da revisão 7** (feita por SQL na migração da revisão 7, sem perder o que a organização mudou): `valor.cnaes_prioritarios` vira `perfil_ideal.setores`; `valor.pesos.cnae` é removido; `esforco.sem_numero_decisor` vira `esforco.contato_decisor`; `probabilidade.pesos` com só `icp` e `midias_sociais` ganha `qualificacao` pelo padrão na mescla.
+
+### 8.7 Perfil ideal (encaixe automático)
+
+Cada organização descreve o cliente que quer conquistar, e o sistema calcula o fator `icp` sozinho com os dados da Receita, sem depender da calculadora da planilha.
+
+| Critério | Pontos | Desligado quando |
+| --- | --- | --- |
+| `setor` | 100 se o CNAE principal está em `setores`, 0 se não | lista vazia |
+| `porte` | 100 se o porte está em `portes`, 0 se não | lista vazia |
+| `idade` | 100 se a empresa tem `idade_minima` anos ou mais; abaixo disso, proporcional (`idade ÷ idade_minima × 100`) | `idade_minima` nulo |
+
+- A nota é a média ponderada dos critérios ligados, com a mesma regra de N/A dos pilares: critério sem o dado do lead (ex.: ainda não enriquecido) sai da conta e o peso vai para os outros.
+- Perfil não configurado (todos os critérios desligados) ou sem nenhum critério calculável: o fator usa `calculadora_icp` (origem `planilha`). Sem ela também, o fator é N/A.
+- A região não entra aqui porque já está no esforço (`ufs_atendidas`). Regime tributário, MEI, CNAEs secundários e natureza jurídica podem virar critérios no futuro (seção 16).
+
+### 8.8 Avaliação do lead (questionário no sistema)
+
+A equipe responde perguntas sobre o lead, e as respostas alimentam o cálculo. O sistema traz um modelo padrão, e o admin de cada organização pode mudar textos, opções, pontos e pesos, tirar ou incluir perguntas (`config_score.avaliacao`).
+
+**Estrutura de uma pergunta:** `{ id, bloco, texto, peso, opcoes: [{ id, rotulo, pontos }] }`.
+
+- `bloco`: `qualificacao` e `midias` viram os fatores `qualificacao` e `midias_sociais` da probabilidade (média ponderada dos pontos das respostas, com `peso` por pergunta). `relacionamento` soma ao esforço os pontos da opção escolhida em cada pergunta (o `peso` é ignorado nesse bloco).
+- `pontos` de 0 a 100; `null` marca a opção "não sei", que conta como N/A (a pergunta sai da conta e o peso vai para as outras). Pergunta sem resposta também é N/A.
+- Validação: até 30 perguntas; `id` de pergunta e de opção em `^[a-z0-9_]{1,40}$`, únicos entre as perguntas e entre as opções de cada pergunta; texto de 1 a 200 caracteres; rótulo de 1 a 80; de 2 a 8 opções; peso de 0 a 100. Em `qualificacao` e `midias`, com pelo menos uma pergunta, a soma dos pesos do bloco precisa ser maior que zero.
+
+**Modelo padrão:**
+
+| Bloco | Pergunta (`id`) | Peso | Opções (pontos) |
+| --- | --- | --- | --- |
+| qualificacao | A empresa tem orçamento para isso? (`orcamento`) | 30 | Sim, confirmado (100) · Provavelmente (60) · Não (0) · Não sei (N/A) |
+| qualificacao | Vocês estão falando com quem decide? (`decisor`) | 25 | Sim (100) · Com quem influencia (60) · Não (20) · Não sei (N/A) |
+| qualificacao | A necessidade está clara? (`necessidade`) | 30 | Muito clara (100) · Alguma (60) · Pouca (30) · Nenhuma (0) · Não sei (N/A) |
+| qualificacao | Quando pretendem decidir? (`prazo`) | 15 | Em até 1 mês (100) · Em até 3 meses (70) · Em até 6 meses (40) · Sem prazo (10) · Não sei (N/A) |
+| midias | Tem perfil ativo em alguma rede social? (`perfil_ativo`) | 30 | Sim (100) · Não (0) · Não sei (N/A) |
+| midias | Publica pelo menos uma vez por semana? (`frequencia`) | 25 | Sim (100) · Não (0) · Não sei (N/A) |
+| midias | Tem site profissional? (`site`) | 25 | Sim (100) · Não (0) · Não sei (N/A) |
+| midias | Faz anúncios pagos? (`anuncios`) | 20 | Sim (100) · Não (0) · Não sei (N/A) |
+| relacionamento | Como o lead chegou até vocês? (`origem_contato`) | — | Contato frio (+20) · Indicação (+5) · Já conversamos antes (0) · Já foi cliente (0) · Não sei (N/A) |
+
+Os ids das opções seguem o rótulo sem acento (`confirmado`, `provavelmente`, `nao`, `nao_sei`, `sim`, `influencia`, `muito_clara`, `alguma`, `pouca`, `nenhuma`, `ate_1_mes`, `ate_3_meses`, `ate_6_meses`, `sem_prazo`, `frio`, `indicacao`, `ja_conversamos`, `ex_cliente`).
+
+**Respostas do lead** (`PUT /leads/:id/avaliacao`):
+
+- Corpo: `{ respostas: { <pergunta>: <opção> | null }, ticket_estimado?: número ≥ 0 | null }`. As respostas enviadas substituem as anteriores inteiras (a tela envia o questionário completo). Pergunta ou opção que não existe no modelo atual → 400.
+- Grava `avaliacao`, `ticket_estimado`, `avaliado_em` e `avaliado_por`, recalcula e responde o detalhe do lead.
+- Se uma pergunta sair do modelo depois, a resposta guardada é ignorada no cálculo. Se o lead nunca foi avaliado, os fatores voltam para a planilha (ou N/A), como em qualquer lead sem avaliação.
+
+### 8.9 Saídas complementares
+
+Calculadas junto com o score, pelas mesmas funções puras, e gravadas em `score_detalhes` (a confiança também em `score_confianca`). Não mudam a fórmula da compensação nem a ordenação.
+
+- **Confiança:** quantos itens do cálculo tinham dado. Contam os fatores de valor e de probabilidade ligados, as penalidades de esforço ligadas e a situação cadastral; desligados não contam. `valor = com_dado ÷ total × 100`. Exemplo: "9 de 10".
+- **Sugestões (o que fazer para aumentar):** até 5, em ordem de ganho. Para cada ação simulável, o cálculo roda de novo com o dado preenchido e registra `compensacao_simulada`, `faixa_simulada` e `ganho`:
+  - `telefone_decisor` (quando `contato_decisor` aplica pontos);
+  - `nome_decisor` ou `usar_decisor_provavel` (quando `sem_nome_decisor` aplica pontos);
+  - `redes_sociais` (quando `sem_redes_sociais` aplica pontos).
+
+  Ações que completam o cálculo mas não têm como prever o resultado entram depois, com `ganho` nulo: `avaliar_qualificacao`, `avaliar_midias`, `avaliar_relacionamento` e `enriquecer` (lead nunca enriquecido).
+- **Estimativa em reais (`financeiro`):**
+  - `ticket`: o `ticket_estimado` do lead (origem `lead`) ou o `ticket_por_porte` do porte dele (origem `porte`). Sem ticket, todos os campos ficam nulos, com `motivo`.
+  - `chance`: a taxa de conversão observada da faixa do lead quando a organização tem pelo menos 20 desfechos nessa faixa (origem `historico`, seção 8.10); antes disso, `score_probabilidade ÷ 100` (origem `indice`). A tela deixa claro que o índice é uma estimativa, não uma probabilidade medida. O cálculo recebe as taxas da organização como parâmetro, para continuar puro.
+  - `valor_esperado = ticket × chance`.
+  - `horas = horas_esforco_zero + (horas_esforco_maximo − horas_esforco_zero) × esforço ÷ 100`, quando as duas estão configuradas; `valor_por_hora = valor_esperado ÷ horas`.
+
+### 8.10 Desfecho, prioridade e aprendizado
+
+- **Desfecho:** quando o status muda para `convertido` ou `descartado`, o backend grava `desfecho_em` e `desfecho_score` (cópia do score naquele momento). Descartar exige `motivo_descarte`, um dos `motivos_descarte` da organização (400 sem ele). Se o status voltar para outra etapa, os três campos são limpos. Recálculos depois do desfecho não alteram `desfecho_score`.
+- **Prioridade** (`GET /leads/prioridade`): duas listas, cada uma por compensação decrescente (N/A no fim), com filtro opcional `responsavel_id` e `limite` (padrão 10, máximo 50):
+  - `abordar`: status `novo` e nenhuma interação nos últimos `dias_espera` dias;
+  - `retomar`: status `em_contato` ou `qualificado` e última interação há `dias_retomar` dias ou mais (ou nenhuma).
+
+  Cada item traz o resumo do lead (`id`, `nome_lead`, `cnpj`, `score_compensacao`, faixa, `score_parcial`, `status`, `responsavel`, `ultima_interacao_em`, `tentativas_sem_resposta`) e um `motivo` em texto (ex.: "sem contato há 9 dias").
+- **Conversão por faixa** (`GET /dashboard/conversao`): para os leads com desfecho, por faixa registrada em `desfecho_score`: convertidos, descartados e taxa (`convertidos ÷ (convertidos + descartados)`); e a contagem por motivo de descarte.
+- **Sugestão de pesos** (`GET /organizacao/sugestao-pesos`, admin):
+  - Exige pelo menos 30 convertidos e 30 descartados com `desfecho_score` da versão 2. Com menos, responde `{ suficiente: false, convertidos, descartados, minimo }`.
+  - Valor e probabilidade: para cada fator, a média dos pontos nos convertidos menos a média nos descartados (só leads com o fator `ok`). Os pesos sugeridos são proporcionais às diferenças positivas, com mínimo de 5, e somam 100 em cada pilar.
+  - Esforço: para cada penalidade, a taxa de conversão de quem tinha a penalidade aplicada comparada à de quem não tinha. Os pontos sugeridos são proporcionais à queda, de 0 a 50.
+  - Responde os pesos atuais e os sugeridos, com o número de leads usado em cada um. Só sugere: aplicar é decisão do admin, pelo `PUT /organizacao`.
+
+**Detalhes do contrato (revisão 7):**
+
+- **Interações:**
+  - `ocorreu_em` aceita `AAAA-MM-DD` (meia-noite UTC) ou data e hora com fuso. Data e hora sem fuso e datas impossíveis são recusadas (400), e há tolerância de 5 minutos para o futuro.
+  - A resposta de cada interação traz `perfil: { id, nome }` de quem registrou.
+  - Um lead de outra organização responde 404.
+  - O resumo do lead é recalculado pela função SQL `atualizar_resumo_interacoes`. Se ela falhar depois da gravação, a rota responde 500, mas a interação fica gravada e o resumo se corrige na próxima interação registrada ou excluída.
+- **Contatos do decisor:** `linkedin_decisor` sem protocolo é gravado com `https://` na frente; outros protocolos e endereços sem domínio são recusados.
+- **Motivo de descarte:**
+  - A comparação com `motivos_descarte` ignora maiúsculas, e o texto é gravado como está configurado.
+  - Quando o status final não é `descartado`, um motivo enviado é ignorado e gravado como nulo.
+  - Apagar o motivo de um lead descartado responde 400.
+- **Lead cadastrado já com desfecho** (`POST /leads` com status `convertido` ou `descartado`): `desfecho_score` é copiado logo depois do primeiro cálculo. Se a cópia falhar, o erro vai para o log e o lead conta na faixa N/A da conversão.
+- **Prioridade:** o `motivo` é "nenhuma interação registrada", "última interação hoje" ou "sem contato há N dias", com "(N tentativas sem resposta)" quando houver. `responsavel_id` malformado ou de outra organização responde 400.
+- **Conversão:** `taxa` é uma fração com 4 casas, e os motivos vêm do mais frequente para o menos frequente.
+- **Sugestão de pesos:**
+  - Cada pilar vem como `{ atuais, sugeridos, fatores | penalidades }`, com o número de `leads` em cada item.
+  - Um fator com peso atual 0 continua 0, e um fator sem comparação possível fica no mínimo de 5. Um pilar sem nenhuma diferença positiva vem com `sugeridos: null`.
+  - No esforço, a maior queda de conversão recebe 50 pontos e as outras são proporcionais. Queda zero ou negativa dá 0, e uma penalidade sem os dois grupos ("com" e "sem") dá `null`.
+  - O valor "atual" de `tentativas_sem_resposta` é `tentativas.maximo`, e o de `relacionamento:<pergunta>` é a maior pontuação entre as opções da pergunta.
 
 ## 9. Enriquecimento por CNPJ
 
@@ -378,6 +527,22 @@ Em `nao_encontrado`, `nao_suportado` e `erro`, o motivo fica em `enriquecimento_
 - **Plano gratuito:** o processador só anda com o servidor acordado. No Render, o servidor dorme após ~15 min sem requisições; enquanto a tela de progresso estiver aberta, as consultas de status o mantêm acordado.
 - Ao concluir cada lead, o score dele é recalculado.
 
+### 9.1 Campos ampliados e reconsulta (revisão 7)
+
+A mesma resposta da BrasilAPI passa a preencher também:
+
+| Coluna do lead | Campo da BrasilAPI | Observação |
+| --- | --- | --- |
+| `telefone_receita` | `ddd_telefone_1` (ou `ddd_telefone_2`, se o primeiro vier vazio) | Só dígitos; muitas vezes é o telefone do contador da empresa |
+| `email_receita` | `email` | Em minúsculas |
+| `socios` | `qsa` | Só `nome_socio` e `qualificacao_socio`, até 20 sócios. CPF, faixa etária e os demais campos do quadro societário não são gravados (LGPD) |
+
+- **Decisor provável:** o primeiro sócio cuja qualificação contenha "ADMINISTRADOR", "PRESIDENTE", "DIRETOR" ou "GERENTE" (sem acento, sem diferenciar maiúsculas); sem nenhum assim, o único sócio quando houver só um. É calculado a partir de `socios`, não é gravado à parte, e aparece como sugestão: a equipe confirma copiando o nome para `nome_decisor`. Enquanto `nome_decisor` estiver vazio, ele reduz a penalidade `sem_nome_decisor` (seção 8.3).
+- **Contato da empresa:** `telefone_receita` ou `email_receita` preenchido conta como o canal `contato_empresa` do esforço.
+- **Telefone e e-mail:** sem `ddd_telefone_1` válido, usa o `ddd_telefone_2`; telefone fora de 8 a 15 dígitos ou e-mail fora do formato (ou com mais de 200 caracteres) ficam nulos, sem truncar.
+- **Reconsulta periódica:** ao iniciar o servidor e depois a cada 24 h com ele acordado, o processador coloca na fila (função `enfileirar_reconsulta`) os leads com enriquecimento `concluido` e `enriquecido_em` mais antigo que `reconsulta_dias` (padrão 90; 0 desliga), exceto os que já têm desfecho. Leads que terminaram em `nao_encontrado`, `nao_suportado` ou `erro` ficam de fora, para não voltarem à fila todo dia; eles continuam podendo ser enfileirados pelo `POST /leads/enriquecer-lote`. A reconsulta usa a mesma fila, as mesmas regras de tentativa e o mesmo rodízio entre organizações.
+- **Mudanças na Receita:** quando uma consulta muda a `situacao_cadastral` ou o `porte` de um lead que já tinha sido enriquecido (com o valor antigo e o novo conhecidos), o backend grava `ultima_mudanca_receita` (`{ em, mudancas: [{ campo, de, para }] }`). O resumo do dashboard passa a trazer a lista das mudanças mais recentes (fase 11).
+
 ## 10. API (backend Express)
 
 Organização de pastas: `src/config`, `src/middlewares`, `src/routes`, `src/controllers`, `src/services`, `src/utils`. Erros sempre no formato `{ "erro": "mensagem" }` com o status HTTP correto (400, 401, 403, 404, 409, 413, 429, 500, 502, 503). Erros inesperados respondem 500 com mensagem genérica; o detalhe fica só no log do servidor. Um `:id` malformado responde 404, igual a um recurso inexistente. O `organizacao_id` nunca é parâmetro: vem do usuário autenticado. Respostas e corpos em JSON, com nomes de campos iguais aos do banco (`snake_case`).
@@ -410,16 +575,27 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `POST /leads/enriquecer-lote` | O | Coloca leads na fila (corpo opcional `{ ids }`, até 1.000); 202 com `{ enfileirados }` (seção 9) |
 | `POST /leads/:id/calcular-score` | O | Recalcula o score de um lead e responde o detalhe do lead |
 | `POST /leads/recalcular-score` | O | Recalcula todos os leads da organização; responde `{ recalculados }` |
-| `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial |
+| `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial; na revisão 7, também as mudanças recentes na Receita (seção 9.1) |
+| `GET /avaliacao/modelo` | O | Modelo de perguntas efetivo da organização (padrão mesclado com o configurado), para montar a tela de avaliação (revisão 7) |
+| `PUT /leads/:id/avaliacao` | O | Grava a avaliação do lead (seção 8.8), recalcula e responde o detalhe do lead |
+| `GET /leads/:id/interacoes` | O | Interações do lead, da mais recente para a mais antiga (revisão 7) |
+| `POST /leads/:id/interacoes` | O | Registra uma interação (`tipo`, `teve_resposta`, `observacao` e `ocorreu_em` opcionais), atualiza o resumo do lead e recalcula; 201 com a interação |
+| `DELETE /leads/:id/interacoes/:interacaoId` | O | Exclui uma interação (quem registrou ou um admin; 403 para os outros), atualiza o resumo e recalcula; 204 |
+| `GET /leads/prioridade` | O | Fila de prioridade `{ abordar, retomar }` (seção 8.10) |
+| `GET /dashboard/conversao` | O | Conversão por faixa e contagem por motivo de descarte (seção 8.10) |
+| `GET /organizacao/sugestao-pesos` | A | Sugestão de pesos a partir dos desfechos (seção 8.10) |
 
-Rotas fixas como `/leads/enriquecimento/status`, `/leads/enriquecer-lote` e `/leads/recalcular-score` são registradas antes de `/leads/:id`.
+Rotas fixas como `/leads/enriquecimento/status`, `/leads/enriquecer-lote`, `/leads/recalcular-score` e `/leads/prioridade` são registradas antes de `/leads/:id`.
 
 **Campos editáveis de um lead** (lista branca de `POST` e `PUT`; outros campos enviados são ignorados):
 
 - textos: `nome_lead` (até 200 caracteres), `nome_decisor` (150), `numero_decisor` (50), `link_cnpj` (500), `redes_sociais` (2000);
 - notas: `calculadora_icp`, `calculadora_midias_sociais` e `nota_final`, números de 0 até a escala da organização (ex.: ICP 15 é recusado numa escala de 0 a 10);
 - `status`, um valor do ENUM;
-- `responsavel_id`, que precisa ser da mesma organização (400 se não for).
+- `responsavel_id`, que precisa ser da mesma organização (400 se não for);
+- revisão 7: `email_decisor` (até 200 caracteres, formato de e-mail, gravado em minúsculas), `linkedin_decisor` (até 500, URL) e `motivo_descarte` (um dos `motivos_descarte`; obrigatório quando o status passa a `descartado`, seção 8.10).
+
+A avaliação (`avaliacao`, `ticket_estimado`) não entra nesta lista: tem rota própria. Os campos de resumo das interações e de desfecho são mantidos pelo backend e nunca aceitos do cliente.
 
 Os links do texto de `redes_sociais` são acrescentados em `lead_redes_sociais` (seção 4.3).
 
@@ -431,11 +607,13 @@ A aplicação tem um serviço de API (axios) com URL base do `.env` e um interce
 
 - **Login e cadastro** (Supabase Auth), com aviso para confirmar o e-mail. Após o login, se `GET /me` vier sem perfil: tela de convites pendentes ou de onboarding (seção 6).
 - **Layout** com cabeçalho "Gestão de Leads", nome da organização e usuário logado, e uma barra "Sites Úteis" com links externos (`target="_blank"`, `rel="noopener noreferrer"`) para casadosdados.com.br, econodata.com.br, cnpj.biz e consultasocio.com.
-- **Dashboard:** cards (total, por status, média do score, sem enriquecimento, score parcial) e ranking dos 10 leads que mais compensam.
+- **Dashboard:** cards (total, por status, média do score, sem enriquecimento, score parcial), ranking dos 10 leads que mais compensam e, na revisão 7, conversão por faixa e mudanças recentes na Receita.
 - **Lista de leads:** tabela com Compensação, Nome do Lead, CNPJ, Nome do Decisor, Redes Sociais, Nota Final (original), Responsável, Status e Ações. Filtro por status, busca com debounce e paginação. O score aparece como barra ou badge por faixa (incluindo N/A e selo de parcial); a nota final original usa cores condicionais (verde, amarelo, vermelho), respeitando a escala da organização; o status aparece como badge colorida. CNPJ exibido com máscara.
-- **Detalhe do lead** (painel lateral ou página): dados originais, dados enriquecidos, redes sociais com links e o score explicado visualmente (três pilares e contribuição de cada fator, com N/A onde faltar dado, a partir de `score_detalhes`). Ações: avançar status, descartar, editar, excluir com confirmação, enriquecer e recalcular.
+- **Detalhe do lead** (painel lateral ou página): o medidor de compensação em destaque, com os três pilares, a contribuição de cada fator (N/A onde faltar dado), a confiança, as sugestões de como aumentar e a estimativa em reais, tudo a partir de `score_detalhes`. Abaixo, dados originais, dados da Receita (incluindo o decisor provável, com a opção de usá-lo), redes sociais e a lista de interações com o botão de registrar uma nova. Ações: avaliar, avançar status, descartar (pedindo o motivo), editar, excluir com confirmação, enriquecer e recalcular.
+- **Avaliar lead** (revisão 7): o questionário em blocos (qualificação, mídias, relacionamento), montado a partir de `GET /avaliacao/modelo`, com o ticket estimado; ao salvar, mostra o novo valor do medidor.
+- **Prioridade** (revisão 7): as listas "abordar" e "retomar" de `GET /leads/prioridade`, filtráveis por responsável.
 - **Importação em 3 passos:** (1) enviar o arquivo; (2) preview com amostra e um select por campo do modelo padrão, pré-preenchido pelo `mapeamento_sugerido`, validando `cnpj` e `nome_lead`; (3) resultado com inseridos, atualizados, ignorados e erros por linha. Inclui o histórico de importações e a opção de enfileirar o enriquecimento e recalcular o score dos leads importados, com barra de progresso.
-- **Configurações** (admin): escalas das calculadoras, pesos e faixas do score, setores prioritários, UFs atendidas, equivalência de letras, membros e convites.
+- **Configurações** (admin): escalas das calculadoras, pesos e faixas do score, perfil ideal (setores, portes, idade mínima), perguntas da avaliação, canais e penalidades de esforço, UFs atendidas, ticket por porte e horas, motivos de descarte, reconsulta, equivalência de letras, membros e convites. Mostra também a sugestão de pesos quando houver desfechos suficientes.
 
 ## 12. Deploy (tudo gratuito)
 
@@ -468,11 +646,16 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 4. **Importação:** preview, confirmação com upsert (função SQL por lote), histórico.
 5. **Score:** motor de score com N/A e testes das funções puras.
 6. **Enriquecimento:** serviço da BrasilAPI e fila em segundo plano.
-7. **Protótipo visual:** mockup navegável de todas as telas da seção 11, com dados fictícios (incluindo N/A e score parcial), validado antes de qualquer código de frontend. Define layout, cores, componentes e fluxos.
-8. **Frontend base:** projeto Vite, Tailwind, rotas, autenticação, onboarding e serviço de API, seguindo o protótipo aprovado.
-9. **Telas:** lista, detalhe, importação, configurações.
-10. **Dashboard** e rota de resumo.
-11. **Endurecimento e deploy:** CORS, limites, backups, variáveis seguras e publicação (seção 12).
+7. **Motor de compensação, revisão 7** (volta às fases 5 e 6; em 2026-11-21 o protótipo da antiga fase 7 foi pausado para isso):
+   - **7a. Motor v2:** funções puras e testes de perfil ideal, avaliação, esforço novo, confiança, sugestões e estimativa em reais; validação e migração do `config_score`.
+   - **7b. Banco e rotas da avaliação:** colunas novas de `leads`, `gravar_scores` com a confiança, `GET /avaliacao/modelo`, `PUT /leads/:id/avaliacao` e os campos editáveis novos.
+   - **7c. Enriquecimento ampliado:** sócios, contatos da Receita, decisor provável, reconsulta periódica e mudanças na Receita (seção 9.1).
+   - **7d. Interações e aprendizado:** tabela `interacoes`, tentativas sem resposta, prioridade, motivo de descarte e desfecho, conversão por faixa e sugestão de pesos (seção 8.10).
+8. **Protótipo visual:** mockup navegável de todas as telas da seção 11, com dados fictícios (incluindo N/A e score parcial), validado antes de qualquer código de frontend. Define layout, cores, componentes e fluxos. Começou antes da revisão 7 e é retomado com o motor no centro (avaliação, interações, prioridade e configurações novas).
+9. **Frontend base:** projeto Vite, Tailwind, rotas, autenticação, onboarding e serviço de API, seguindo o protótipo aprovado.
+10. **Telas:** lista, detalhe, avaliação, prioridade, importação, configurações.
+11. **Dashboard** e rotas de resumo e conversão.
+12. **Endurecimento e deploy:** CORS, limites, backups, variáveis seguras e publicação (seção 12).
 
 ## 15. Convenções de desenvolvimento
 
@@ -489,7 +672,9 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 - **Cadastro de empresas:** assumido como aberto (qualquer pessoa cria sua organização como `admin`). Confirmar se será apenas por convite.
 - **Cobrança e planos:** fora do escopo da primeira versão.
 - **Pesos e faixas do score:** os valores da seção 8 são provisórios; ajustar com a realidade de cada empresa.
-- **LGPD:** nome e telefone do decisor são dados pessoais; avaliar aviso de privacidade e exclusão a pedido antes de abrir para clientes reais.
+- **LGPD:** nome, telefone, e-mail e LinkedIn do decisor e os nomes dos sócios vindos da Receita são dados pessoais (os sócios são dado público, mas continuam pessoais); avaliar aviso de privacidade e exclusão a pedido antes de abrir para clientes reais.
+- **Ideias para depois (marcadas como "talvez" na revisão 7):** regime tributário como pista de faturamento, MEI, CNAEs secundários e natureza jurídica no perfil ideal; ciclo de venda por porte e cidades atendidas no esforço; histórico da compensação (cerca de 100 bytes por mudança, guardando só os números); comparação planilha × sistema; próximo contato com data.
+- **Chance de fechar na estimativa em reais:** até haver 20 desfechos por faixa, ela é o índice de probabilidade, não uma probabilidade medida.
 - **E-mails do Supabase Auth:** o envio padrão do plano gratuito tem limite baixo por hora e serve para testes. Para usuários reais (confirmação de cadastro e convites), configurar um SMTP próprio com plano gratuito na fase 11.
 - **Remoção de membros e troca de papel:** ainda sem rota; definir regras (por exemplo, impedir remover o último admin) antes de implementar.
 - **Remoção de links de redes sociais:** os links só são acrescentados; um link digitado errado continua em `lead_redes_sociais`. Avaliar uma rota de exclusão de link na fase 9.
