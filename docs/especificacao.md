@@ -576,7 +576,7 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `POST /leads/enriquecer-lote` | O | Coloca leads na fila (corpo opcional `{ ids }`, até 1.000); 202 com `{ enfileirados }` (seção 9) |
 | `POST /leads/:id/calcular-score` | O | Recalcula o score de um lead e responde o detalhe do lead |
 | `POST /leads/recalcular-score` | O | Recalcula todos os leads da organização; responde `{ recalculados }` |
-| `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial; na revisão 7, também as mudanças recentes na Receita (seção 9.1) |
+| `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial; na revisão 7, também as mudanças recentes na Receita (seção 9.1). Formato e regras na seção 11.3 |
 | `GET /avaliacao/modelo` | O | Modelo de perguntas efetivo da organização (padrão mesclado com o configurado), para montar a tela de avaliação (revisão 7) |
 | `PUT /leads/:id/avaliacao` | O | Grava a avaliação do lead (seção 8.8), recalcula e responde o detalhe do lead |
 | `GET /leads/:id/interacoes` | O | Interações do lead, da mais recente para a mais antiga (revisão 7) |
@@ -663,7 +663,7 @@ A aplicação tem um serviço de API (axios) com URL base do `.env` e um interce
 - **Detalhe:**
   - o medidor em arco, os pilares, a fórmula, a estimativa em reais, as sugestões e o fator a fator saem de `score_detalhes`;
   - o "decisor provável" pode ser copiado para o nome do decisor;
-  - "Avançar" segue o funil (novo → em contato → em negociação → convertido);
+  - "Avançar" segue o funil (novo → em contato → qualificado → convertido);
   - "Descartar" pede o motivo.
 - **Avaliar:**
   - a prévia do medidor é uma simulação no navegador, feita com o `score_detalhes` atual e as respostas marcadas;
@@ -673,7 +673,40 @@ A aplicação tem um serviço de API (axios) com URL base do `.env` e um interce
 - **Configurações** (só admin), em 6 abas: cálculo do potencial, perfil ideal, perguntas da avaliação, negócio e funil, escalas da planilha e equipe.
   - Edita-se a configuração efetiva. Ao salvar, vão para `PUT /organizacao` só as seções de topo que diferem do padrão; voltar ao padrão é salvar a configuração sem essas seções.
   - Depois de salvar, a tela oferece recalcular todos os leads (`POST /leads/recalcular-score`), porque o potencial gravado não muda sozinho.
-- **Dashboard** (`/`): fica para a fase 11, com os gráficos.
+- **Dashboard** (`/`): seção 11.3.
+
+### 11.3 Painel de potencial (fase 11)
+
+**`GET /dashboard/resumo`** vem da função SQL `resumo_dashboard(organizacao, alta, media)`. Ela conta tudo no banco, porque a API do Supabase devolve no máximo 1.000 linhas por consulta.
+
+- **Leads "em aberto":** são os com status novo, em contato ou qualificado. O potencial médio, as faixas, a distribuição, os parciais e o ranking contam só esses, porque lead convertido ou descartado já teve desfecho e não é mais alguém para trabalhar.
+- **Contam todos os leads:** o total, os status e o enriquecimento.
+- **Limites das faixas:** são os atuais da organização, os mesmos do filtro `faixa` de `GET /leads`. Eles voltam na resposta, em `faixas`.
+
+| Campo | Conteúdo |
+| --- | --- |
+| `total`, `em_aberto` | Contagens |
+| `por_status` | Os 5 status, sempre presentes |
+| `media_potencial` | Média do potencial dos leads em aberto, com 1 casa (nula sem nenhum potencial); os N/A ficam fora |
+| `com_potencial`, `parciais` | Leads em aberto com potencial calculado e, entre eles, os parciais |
+| `por_faixa` | `alta`, `media`, `baixa`, `na` |
+| `distribuicao` | 10 blocos de 10 pontos `{ de, total, parciais }`; o bloco 90 inclui o 100 |
+| `enriquecimento` | `concluido`, `na_fila` (pendente ou processando), `sem_resultado` (não encontrado, não suportado ou erro), `nunca` |
+| `top` | Os 10 maiores potenciais em aberto: `id`, `nome_lead`, `cnpj`, `score_compensacao`, `score_parcial`, `status`, `responsavel` |
+| `mudancas_receita` | As 5 mudanças mais recentes em `ultima_mudanca_receita` (`id`, `nome_lead`, `em`, `mudancas`), incluindo leads com desfecho |
+| `faixas` | Limites usados (`alta`, `media`) |
+
+**Tela** (segue o protótipo aprovado):
+
+- **Potencial médio da carteira:** o medidor em arco.
+- **Como a carteira se distribui:**
+  - uma barra segmentada por faixa, com a legenda mostrando o intervalo, a quantidade e a porcentagem;
+  - um histograma de 10 em 10 pontos, com a parte parcial hachurada e uma opção "ver em tabela".
+- **Números do topo:** parciais, sem dados da Receita e total.
+- **Os 10 maiores potenciais.**
+- **Gestão do funil:** os status, os dados da Receita, "O potencial acerta?" (`GET /dashboard/conversao`, só as faixas com desfecho) e "Mudou na Receita".
+- **Gráficos:** são em HTML e SVG próprios, sem biblioteca, nas cores do medidor. Cada barra e cada bloco mostram o valor ao passar o mouse e no foco do teclado, e os números também aparecem em texto.
+- **Animações:** as barras crescem uma vez ao aparecer. Na tabela do ranking não há animação, e com `prefers-reduced-motion` nada se mexe.
 
 ## 12. Deploy (tudo gratuito)
 
