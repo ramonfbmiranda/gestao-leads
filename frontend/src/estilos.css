@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/* Tema escuro pela classe "dark" no <html> (aplicada no index.html e pelo TemaContexto). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Tokens do protótipo aprovado (fase 8). A interface é neutra (preto e branco) e
+ * o azul é reservado ao medidor de potencial, numa escala de um tom só
+ * (baixo → alto do claro para o escuro), validada para daltonismo nos dois temas.
+ */
+:root {
+  --fundo: #f5f6f8;
+  --superficie: #ffffff;
+  --superficie-2: #f8f9fb;
+  --borda: #e4e7ec;
+  --borda-forte: #d0d5dd;
+  --divisor: #eef0f3;
+  --texto: #111827;
+  --texto-2: #525b6b;
+  --texto-3: #6b7383;
+  --hover: #f2f4f7;
+  --tinta: #111113;
+  --tinta-hover: #34343a;
+  --sobre-tinta: #ffffff;
+  --foco: #2a78d6;
+  --link: #1f4fb8;
+  --pot-baixa: #86b6ef;
+  --pot-media: #3987e5;
+  --pot-alta: #184f95;
+  --pot-na: #d0d5dd;
+  --pot-trilho: #e3ecf8;
+  --pot-texto: #184f95;
+  --pot-suave: #edf3fc;
+  --parcial: #fff8e6;
+  --parcial-texto: #8a4b08;
+  --parcial-borda: #d9a441;
+  --ok: #ecfdf3;
+  --ok-borda: #abefc6;
+  --ok-texto: #085d3a;
+  --aviso: #fffbeb;
+  --aviso-borda: #fce3a9;
+  --aviso-texto: #6b3a06;
+  --perigo: #b42318;
+  --perigo-cheio: #b42318;
+  --perigo-suave: #fef3f2;
+  --perigo-borda: #f1c4bf;
+  --veu: rgb(16 24 40 / 0.5);
+  color-scheme: light;
+}
+
+.dark {
+  --fundo: #09090b;
+  --superficie: #131316;
+  --superficie-2: #18181c;
+  --borda: #26262c;
+  --borda-forte: #3a3a42;
+  --divisor: #1e1e23;
+  --texto: #f4f4f5;
+  --texto-2: #a8a8b3;
+  --texto-3: #8e8e99;
+  --hover: #1c1c21;
+  --tinta: #f4f4f5;
+  --tinta-hover: #d4d4d8;
+  --sobre-tinta: #111113;
+  --foco: #5b9bea;
+  --link: #8db4f5;
+  --pot-baixa: #1c5cab;
+  --pot-media: #3987e5;
+  --pot-alta: #9ec5f4;
+  --pot-na: #3f3f46;
+  --pot-trilho: #1a2230;
+  --pot-texto: #9ec5f4;
+  --pot-suave: #141c2a;
+  --parcial: #271e0c;
+  --parcial-texto: #f7c97a;
+  --parcial-borda: #8a6420;
+  --ok: #0e2216;
+  --ok-borda: #1f5b38;
+  --ok-texto: #86efac;
+  --aviso: #241c0b;
+  --aviso-borda: #5c4515;
+  --aviso-texto: #f7c97a;
+  --perigo: #f87171;
+  --perigo-cheio: #c93b34;
+  --perigo-suave: #2a1416;
+  --perigo-borda: #5b2626;
+  --veu: rgb(0 0 0 / 0.7);
+  color-scheme: dark;
+}
+
+/* Utilitários do Tailwind ligados aos tokens: bg-superficie, text-texto-2, border-borda... */
+@theme inline {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --color-fundo: var(--fundo);
+  --color-superficie: var(--superficie);
+  --color-superficie-2: var(--superficie-2);
+  --color-borda: var(--borda);
+  --color-borda-forte: var(--borda-forte);
+  --color-divisor: var(--divisor);
+  --color-texto: var(--texto);
+  --color-texto-2: var(--texto-2);
+  --color-texto-3: var(--texto-3);
+  --color-hover: var(--hover);
+  --color-tinta: var(--tinta);
+  --color-tinta-hover: var(--tinta-hover);
+  --color-sobre-tinta: var(--sobre-tinta);
+  --color-foco: var(--foco);
+  --color-link: var(--link);
+  --color-pot-baixa: var(--pot-baixa);
+  --color-pot-media: var(--pot-media);
+  --color-pot-alta: var(--pot-alta);
+  --color-pot-na: var(--pot-na);
+  --color-pot-trilho: var(--pot-trilho);
+  --color-pot-texto: var(--pot-texto);
+  --color-pot-suave: var(--pot-suave);
+  --color-parcial: var(--parcial);
+  --color-parcial-texto: var(--parcial-texto);
+  --color-parcial-borda: var(--parcial-borda);
+  --color-ok: var(--ok);
+  --color-ok-borda: var(--ok-borda);
+  --color-ok-texto: var(--ok-texto);
+  --color-aviso: var(--aviso);
+  --color-aviso-borda: var(--aviso-borda);
+  --color-aviso-texto: var(--aviso-texto);
+  --color-perigo: var(--perigo);
+  --color-perigo-cheio: var(--perigo-cheio);
+  --color-perigo-suave: var(--perigo-suave);
+  --color-perigo-borda: var(--perigo-borda);
+  --color-veu: var(--veu);
+}
+
+@layer base {
+  html,
+  body {
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  a {
+    color: var(--link);
+  }
+  :focus-visible {
+    outline: 2px solid var(--foco);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
