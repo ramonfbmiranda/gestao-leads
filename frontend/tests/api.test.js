@@ -36,6 +36,7 @@ describe('criarApi', () => {
     ['excluirInteracao', ['l1', 'i1'], 'delete', '/leads/l1/interacoes/i1'],
     ['listarImportacoes', [], 'get', '/importacoes'],
     ['obterImportacao', ['m1'], 'get', '/importacoes/m1'],
+    ['resumoDashboard', [], 'get', '/dashboard/resumo'],
     ['conversao', [], 'get', '/dashboard/conversao'],
   ])('%s → %s %s', async (funcao, argumentos, metodo, rota) => {
     const resposta = await api[funcao](...argumentos);

@@ -5,10 +5,11 @@ import { Layout } from '../componentes/Layout.jsx';
 import { AvaliarLead } from '../paginas/AvaliarLead.jsx';
 import { Configuracoes } from '../paginas/Configuracoes.jsx';
 import { DetalheLead } from '../paginas/DetalheLead.jsx';
-import { EmConstrucao, NaoEncontrada } from '../paginas/EmConstrucao.jsx';
+import { NaoEncontrada } from '../paginas/EmConstrucao.jsx';
 import { Entrar } from '../paginas/Entrar.jsx';
 import { Importacao } from '../paginas/Importacao.jsx';
 import { Leads } from '../paginas/Leads.jsx';
+import { Painel } from '../paginas/Painel.jsx';
 import { PrimeiroAcesso } from '../paginas/PrimeiroAcesso.jsx';
 import { Prioridade } from '../paginas/Prioridade.jsx';
 import { SomenteComPerfil, SomenteSemPerfil, SomenteSemSessao } from './Guardas.jsx';
@@ -22,8 +23,7 @@ export const roteador = createBrowserRouter([
       {
         element: <Layout />,
         children: [
-          // O painel de potencial chega na fase 11.
-          { index: true, element: <EmConstrucao titulo="Potencial dos leads" descricao="Quem vale mais a pena trabalhar agora, e como está o funil." /> },
+          { index: true, element: <Painel /> },
           { path: 'leads', element: <Leads /> },
           { path: 'leads/:id', element: <DetalheLead /> },
           { path: 'leads/:id/avaliar', element: <AvaliarLead /> },

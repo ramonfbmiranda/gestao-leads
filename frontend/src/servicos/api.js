@@ -88,6 +88,7 @@ export function criarApi(cliente) {
     obterImportacao: (importacaoId) => get(`/importacoes/${id(importacaoId)}`),
 
     // Dashboard
+    resumoDashboard: () => get('/dashboard/resumo'),
     conversao: () => get('/dashboard/conversao'),
   };
 }

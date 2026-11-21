@@ -45,7 +45,7 @@ export function Prioridade() {
     <>
       <CabecalhoPagina
         titulo="Quem abordar agora"
-        descricao={`Ordenados pelo potencial. Quem teve contato nos últimos ${espera} dias sai de "abordar"; quem está em negociação e sumiu há ${retomar} dias ou mais volta em "retomar".`}
+        descricao={`Ordenados pelo potencial. Quem teve contato nos últimos ${espera} dias sai de "abordar"; quem está em contato ou qualificado e sumiu há ${retomar} dias ou mais volta em "retomar".`}
       />
       <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por responsável">
         <span className="mr-1 text-xs font-semibold text-texto-2">Responsável</span>
@@ -55,7 +55,7 @@ export function Prioridade() {
       {erro && <ErroCarregamento erro={erro} aoTentar={recarregar} />}
       <div className={`flex flex-wrap items-start gap-4 ${carregando ? 'opacity-60' : ''}`} aria-busy={carregando}>
         <Lista titulo="Abordar" descricao="Leads novos sem contato recente: comece pelos de maior potencial." itens={dados?.abordar ?? []} faixas={faixas} />
-        <Lista titulo="Retomar" descricao={`Em negociação e sem contato há ${retomar} dias ou mais.`} itens={dados?.retomar ?? []} faixas={faixas} />
+        <Lista titulo="Retomar" descricao={`Em contato ou qualificados, sem contato há ${retomar} dias ou mais.`} itens={dados?.retomar ?? []} faixas={faixas} />
       </div>
     </>
   );

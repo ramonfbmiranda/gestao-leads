@@ -352,7 +352,7 @@ export function Configuracoes() {
           <Secao titulo="Fila de prioridade e Receita">
             <div className="flex flex-wrap gap-4">
               <Numero id="d-esp" rotulo="Sai de “abordar” por (dias)" valor={config.prioridade.dias_espera} aoMudar={(v) => mudar(['prioridade', 'dias_espera'], Math.round(v))} ajuda="depois de um contato" />
-              <Numero id="d-ret" rotulo="“Retomar” depois de (dias)" valor={config.prioridade.dias_retomar} aoMudar={(v) => mudar(['prioridade', 'dias_retomar'], Math.round(v))} ajuda="sem contato, em negociação" />
+              <Numero id="d-ret" rotulo="“Retomar” depois de (dias)" valor={config.prioridade.dias_retomar} aoMudar={(v) => mudar(['prioridade', 'dias_retomar'], Math.round(v))} ajuda="sem contato, em contato ou qualificado" />
               <Numero id="d-rec" rotulo="Reconsultar a Receita a cada (dias)" valor={config.reconsulta_dias} aoMudar={(v) => mudar(['reconsulta_dias'], Math.round(v))} ajuda="0 desliga" />
             </div>
           </Secao>

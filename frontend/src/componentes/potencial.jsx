@@ -85,7 +85,7 @@ export function MedidorArco({ valor, parcial, faixas, rotulo = 'Potencial do lea
             d="M 24 120 A 96 96 0 0 1 216 120"
             fill="none"
             strokeWidth="18"
-            className={`${TRACO[faixa]} transition-[stroke-dashoffset] duration-500`}
+            className={`${TRACO[faixa]} animar-arco transition-[stroke-dashoffset] duration-500`}
             pathLength="100"
             strokeDasharray="100 100"
             strokeDashoffset={100 - valor}
@@ -93,7 +93,7 @@ export function MedidorArco({ valor, parcial, faixas, rotulo = 'Potencial do lea
         )}
         {divisao(limites.media)}
         {divisao(limites.alta)}
-        {marcador && <circle cx={marcador.x} cy={marcador.y} r="8" strokeWidth="3" className={`fill-superficie ${TRACO[faixa]}`} />}
+        {marcador && <circle cx={marcador.x} cy={marcador.y} r="8" strokeWidth="3" className={`fill-superficie animar-surgir ${TRACO[faixa]}`} />}
         <text x="24" y="138" textAnchor="middle" fontSize="11" className="fill-texto-2">0</text>
         <text x="216" y="138" textAnchor="middle" fontSize="11" className="fill-texto-2">100</text>
       </svg>

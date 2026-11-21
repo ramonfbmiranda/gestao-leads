@@ -31,6 +31,11 @@
   --pot-trilho: #e3ecf8;
   --pot-texto: #184f95;
   --pot-suave: #edf3fc;
+  /* Texto sobre o preenchimento de cada faixa (branco ou quase preto, pela luminância). */
+  --sobre-alta: #ffffff;
+  --sobre-media: #0b0b0b;
+  --sobre-baixa: #0b0b0b;
+  --sobre-na: #344054;
   --parcial: #fff8e6;
   --parcial-texto: #8a4b08;
   --parcial-borda: #d9a441;
@@ -71,6 +76,10 @@
   --pot-trilho: #1a2230;
   --pot-texto: #9ec5f4;
   --pot-suave: #141c2a;
+  --sobre-alta: #0b0b0b;
+  --sobre-media: #0b0b0b;
+  --sobre-baixa: #ffffff;
+  --sobre-na: #e4e4e7;
   --parcial: #271e0c;
   --parcial-texto: #f7c97a;
   --parcial-borda: #8a6420;
@@ -114,6 +123,10 @@
   --color-pot-trilho: var(--pot-trilho);
   --color-pot-texto: var(--pot-texto);
   --color-pot-suave: var(--pot-suave);
+  --color-sobre-alta: var(--sobre-alta);
+  --color-sobre-media: var(--sobre-media);
+  --color-sobre-baixa: var(--sobre-baixa);
+  --color-sobre-na: var(--sobre-na);
   --color-parcial: var(--parcial);
   --color-parcial-texto: var(--parcial-texto);
   --color-parcial-borda: var(--parcial-borda);
@@ -146,6 +159,36 @@
     outline: 2px solid var(--foco);
     outline-offset: 2px;
   }
+}
+
+/* Barras crescem da base uma vez, ao aparecer (só transform: barato e suave). */
+@keyframes crescer-x {
+  from { transform: scaleX(0); }
+}
+@keyframes crescer-y {
+  from { transform: scaleY(0); }
+}
+.animar-x {
+  transform-origin: left center;
+  animation: crescer-x 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+/* Varredura do arco do medidor ao aparecer (0,75 s, sem quique); o marcador surge no fim. */
+@keyframes varrer {
+  from { stroke-dashoffset: 100; }
+}
+@keyframes surgir {
+  from { opacity: 0; }
+}
+.animar-arco {
+  animation: varrer 0.75s cubic-bezier(0, 0, 0.38, 0.9) both;
+}
+.animar-surgir {
+  animation: surgir 0.3s ease-out 0.7s both;
+}
+.animar-y {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: crescer-y 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
