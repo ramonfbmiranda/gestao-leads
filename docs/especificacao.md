@@ -2,7 +2,7 @@
 
 Documento vivo com o contexto e os requisitos do sistema. É a fonte da verdade do projeto: qualquer mudança de contrato (tabelas, colunas, rotas, parâmetros) é avisada antes e registrada aqui.
 
-Última revisão: 2026-11-20 (revisão 3: contrato do CRUD da fase 3: responsáveis, listagem de leads e validação do `config_score`).
+Última revisão: 2026-11-20 (revisão 6: enriquecimento pela BrasilAPI, fila no banco e capital social zero como N/A).
 
 ## 1. Visão geral
 
@@ -31,7 +31,7 @@ Plataforma web multiempresa (SaaS): cada empresa cliente cria uma conta, importa
 | Banco de dados | PostgreSQL no Supabase (SQL puro versionado em `supabase/migrations`, aplicado com a Supabase CLI) |
 | Autenticação | Supabase Auth (e-mail e senha, com confirmação de e-mail) |
 | Backend | Node.js com Express, módulos ES (`import`/`export`), `@supabase/supabase-js` com a chave secreta do projeto |
-| Upload e planilhas | `multer` (em memória) e `xlsx` (SheetJS) para `.xlsx` e `.csv` |
+| Upload e planilhas | `multer` (em memória) e `xlsx` (SheetJS) para `.xlsx` e `.csv`. O SheetJS é instalado pelo CDN oficial (`cdn.sheetjs.com`): a versão do registro npm está parada e tem falhas de segurança conhecidas |
 | Frontend | React com Vite, Tailwind CSS, React Router, axios |
 | Autenticação no frontend | `@supabase/supabase-js` com a chave pública, só para login, cadastro e sessão |
 | Dados públicos | BrasilAPI (consulta de CNPJ) |
@@ -63,7 +63,7 @@ Nomes em português, `snake_case`, sem acento. Estes nomes são o contrato do si
 - Rejeitar sequências de um único caractere repetido (ex.: `00000000000000`).
 - Planilhas perdem os zeros iniciais de CNPJs numéricos: valores só com dígitos e de 11 a 13 posições recebem zeros à esquerda antes da validação. Valores mais curtos são recusados.
 - O CNPJ de um lead não é editável: ele é a chave da importação. Para corrigir, exclui-se o lead e cadastra-se de novo.
-- Conferir na documentação atual se a BrasilAPI já consulta CNPJ alfanumérico; se não, o enriquecimento marca esses leads como `nao_suportado` (seção 7) sem tratá-los como erro.
+- A BrasilAPI já consulta CNPJ alfanumérico (conferido em 2026-11-20: valida os dígitos e responde 404 para um alfanumérico inexistente). Se um dia ela recusar o formato (400 para um CNPJ que o backend já validou), o lead fica como `nao_suportado` (seção 9), sem ser tratado como erro.
 
 ### 4.2 Tipo e função auxiliares
 
@@ -88,12 +88,12 @@ Nomes em português, `snake_case`, sem acento. Estes nomes são o contrato do si
 | Originais da planilha | `cnpj` (char(14), obrigatório, CHECK `^[0-9A-Z]{12}[0-9]{2}$`), `link_cnpj` (text), `nome_lead` (text, obrigatório), `nome_decisor` (text), `numero_decisor` (text), `redes_sociais` (text, valor original), `calculadora_icp`, `calculadora_midias_sociais`, `nota_final` (numeric(10,2)) |
 | Funil | `status` (`status_lead`, NOT NULL, default `novo`) |
 | Enriquecimento (opcionais) | `razao_social`, `porte`, `capital_social` (numeric(16,2)), `cnae_principal`, `data_abertura` (date), `cidade`, `uf` (char(2)), `situacao_cadastral`, `enriquecido_em` (timestamptz) |
-| Fila de enriquecimento | `enriquecimento_status` (text, CHECK em `pendente`, `processando`, `concluido`, `nao_encontrado`, `nao_suportado`, `erro`; nulo = nunca solicitado), `enriquecimento_tentativas` (int, default 0), `enriquecimento_erro` (text) |
+| Fila de enriquecimento | `enriquecimento_status` (text, CHECK em `pendente`, `processando`, `concluido`, `nao_encontrado`, `nao_suportado`, `erro`; nulo = nunca solicitado), `enriquecimento_tentativas` (int, default 0), `enriquecimento_erro` (text), `enriquecimento_proxima_em` (timestamptz: para `pendente`, quando pode ser tentado; para `processando`, o prazo da reserva) |
 | Score (0 a 100, CHECK, nulo = N/A) | `score_valor`, `score_probabilidade`, `score_esforco`, `score_compensacao` (numeric(5,2)), `score_parcial` (boolean, NOT NULL, default false), `score_detalhes` (jsonb), `score_calculado_em` (timestamptz) |
 | Flexibilidade | `dados_extras` (jsonb, NOT NULL, default `{}`), `ultima_importacao_id` (FK para `importacoes`, ON DELETE SET NULL) |
 | Controle | `created_at`, `updated_at` |
 
-Restrição UNIQUE (`organizacao_id`, `cnpj`). Índices em (`organizacao_id`, `score_compensacao` DESC NULLS LAST), (`organizacao_id`, `status`), (`responsavel_id`) e índice parcial em (`enriquecimento_status`) onde `enriquecimento_status = 'pendente'`.
+Restrição UNIQUE (`organizacao_id`, `cnpj`). Índices em (`organizacao_id`, `score_compensacao` DESC NULLS LAST), (`organizacao_id`, `status`), (`responsavel_id`) e índices parciais da fila: (`organizacao_id`, `enriquecimento_proxima_em`) onde `pendente` e (`enriquecimento_proxima_em`) onde `processando`.
 
 Quando uma nota chega em letra (A/B/C…), o número convertido vai na coluna numérica e o texto original fica em `dados_extras.originais.<campo>`.
 
@@ -170,6 +170,40 @@ Fluxo em duas fases:
 
 A importação é idempotente quanto ao estado dos leads: importar o mesmo arquivo duas vezes deixa os leads exatamente iguais (a segunda importação aparece no histórico, com os leads contados como atualizados).
 
+**Detalhes do contrato:**
+
+- **O arquivo vai nas duas fases** (multipart, campo `arquivo`). Nada fica guardado no servidor entre o preview e a confirmação, então o backend continua sem estado e funciona mesmo se o servidor reiniciar no meio do caminho.
+- **Leitura:**
+  - só a primeira aba, com o cabeçalho na primeira linha não vazia e linhas totalmente vazias ignoradas;
+  - cabeçalhos vazios viram "Coluna B", e repetidos ganham sufixo ("Obs (2)");
+  - CSV com vírgula ou ponto e vírgula, em UTF-8 ou Windows-1252 (o padrão do Excel em português);
+  - no CSV, tudo é lido como texto, para não perder zeros à esquerda;
+  - no `.xlsx`, células com formato de porcentagem viram "75%" e datas viram "AAAA-MM-DD";
+  - limites de 200 colunas e 20.000 linhas de dados.
+- **Resposta do preview:** `{ nome_arquivo, colunas, amostra, total_linhas, campos, mapeamento_sugerido }`.
+  - `amostra` são as 5 primeiras linhas no formato `{ coluna: valor }`.
+  - `campos` traz os campos do modelo, com `rotulo` e `obrigatorio`.
+  - `mapeamento_sugerido` tem o formato `{ campo: "Cabeçalho" | null }`, com um cabeçalho por campo no máximo.
+- **Confirmação:** campo `mapeamento` em texto JSON, no formato `{ campo: "Cabeçalho da planilha" }`. As chaves são as da seção 4.4 (`responsavel_id` recebe a coluna "Quem mapeou?"), e `null` ou vazio deixa o campo sem mapear. As regras:
+  - `cnpj` e `nome_lead` são obrigatórios;
+  - uma coluna não pode servir a dois campos;
+  - coluna inexistente ou campo desconhecido → 400.
+  - Responde 201 com a importação: contagens, `erros`, `mapeamento` e `status`.
+- **CNPJ:** com ou sem máscara. Zeros iniciais perdidos pelo Excel são recompostos (seção 4.1).
+- **Notas** (`calculadora_icp`, `calculadora_midias_sociais`, `nota_final`), convertidas para a escala da organização:
+  - número ou texto numérico é usado como está ("7,5", "1.234,5" e "1,234.5" são entendidos);
+  - porcentagem é uma fração da escala ("75%" na escala 0-10 vira 7,5);
+  - letra segue a `equivalencia_letras` ("B" = 75% da escala);
+  - letra e porcentagem guardam o texto original em `dados_extras.originais.<campo>`;
+  - valor fora de 0 até a escala, ou que não é número, invalida a linha.
+- **Textos:** mesmos limites do cadastro manual (seção 10); texto maior invalida a linha.
+- **Responsável:** o nome tem os espaços normalizados e é reaproveitado sem diferenciar maiúsculas.
+- **Colunas não mapeadas** vão para `dados_extras` com o nome do cabeçalho, com textos limitados a 1.000 caracteres. Uma coluna chamada "originais" vira "originais (planilha)".
+- **Contagens:** `inseridos + atualizados + ignorados = total_linhas`. `ignorados` são as linhas inválidas mais as duplicadas.
+- **Erros:** `erros` guarda no máximo 1.000 itens `{ linha, motivo }`; `linha` é o número da linha no Excel. Se passar disso, o último item diz quantos ficaram de fora.
+- **Falha de gravação:** se um lote falhar, os lotes anteriores continuam gravados, e a importação fica como `falhou` com as contagens até ali.
+- Ao concluir, o score dos leads da importação é recalculado (seção 8.5).
+
 ## 8. Score de compensação (núcleo do sistema)
 
 Implementado como funções puras (sem acesso ao banco), recebendo o lead e a configuração da organização, e totalmente testáveis. Os pesos ficam em `organizacoes.config_score`, nunca fixos no código. Os valores abaixo são o padrão (seção 8.6) e são editáveis na tela de configurações.
@@ -197,8 +231,8 @@ A média geométrica mantém a escala 0-100 (valor 70 e probabilidade 70 dão 70
 
 | Fator | Peso | Pontuação padrão |
 | --- | --- | --- |
-| Porte | 40% | Micro empresa 30, Pequeno porte 60, Demais 100 (conferir os valores que a BrasilAPI devolve) |
-| Capital social | 35% | < 10 mil: 10; < 100 mil: 30; < 500 mil: 50; < 1 mi: 70; < 5 mi: 85; ≥ 5 mi: 100 |
+| Porte | 40% | Micro empresa 30, Pequeno porte 60, Demais 100. A BrasilAPI devolve `MICRO EMPRESA`, `EMPRESA DE PEQUENO PORTE`, `DEMAIS` ou `NÃO INFORMADO` (este último fica N/A) |
+| Capital social | 35% | < 10 mil: 10; < 100 mil: 30; < 500 mil: 50; < 1 mi: 70; < 5 mi: 85; ≥ 5 mi: 100. Capital zero é N/A (seção 8.5) |
 | Idade da empresa (`data_abertura`) | 15% | < 1 ano: 20; 1-3: 40; 3-5: 60; 5-10: 80; ≥ 10: 100 |
 | CNAE prioritário | 10% | 100 se o CNAE principal estiver na lista da organização, 0 se não; desligado se a lista estiver vazia |
 
@@ -226,9 +260,35 @@ Se a `situacao_cadastral` for **conhecida** e diferente de ativa, `score_compens
 
 ### 8.5 Detalhes, recálculo e faixas
 
-- **`score_detalhes` (jsonb):** para cada pilar, o valor e a lista de fatores com valor bruto, pontuação, peso efetivo, contribuição e indicação de N/A; também a fórmula usada, o limite por situação cadastral (se aplicado) e a versão da configuração.
-- **Recálculo:** em importação, enriquecimento, edição de campos que influenciam o score e mudança de configuração (rota de recálculo em lote).
+- **`score_detalhes` (jsonb):**
+  ```
+  { versao, config_em, formula ("media_geometrica" | "pilar_unico" | "na"), faixa ("alta" | "media" | "baixa" | "na"),
+    compensacao_sem_limite, limite_situacao ({ situacao, limite } ou null), motivos_parcial: [texto],
+    valor:         { valor, parcial, fatores: [{ fator, rotulo, peso, situacao, valor_bruto, pontos, peso_efetivo, contribuicao, motivo? }] },
+    probabilidade: { valor, parcial, fatores: [...] },
+    esforco:       { valor, parcial, penalidades: [{ penalidade, rotulo, pontos, situacao, aplicada, motivo? }] } }
+  ```
+  - `situacao` de um fator: `ok`, `na` (falta dado do lead) ou `desligado` (peso zero ou lista vazia na configuração).
+  - `peso_efetivo` é o percentual depois da redistribuição dos N/A.
+  - `config_em` é o `updated_at` da organização no momento do cálculo. Se a organização mudou depois, o score está desatualizado.
+- **Recálculo automático:**
+  - no cadastro manual;
+  - na edição de `calculadora_icp`, `calculadora_midias_sociais`, `nome_decisor`, `numero_decisor` ou `redes_sociais`;
+  - no fim de cada importação (leads da importação);
+  - no enriquecimento (fase 6).
+
+  Se o recálculo falhar, a operação principal continua válida, o erro vai para o log e o score pode ser refeito pela rota de lote. Depois de mudar escalas ou `config_score`, o frontend chama `POST /leads/recalcular-score`. O recálculo não é automático no `PUT /organizacao` para não deixar o salvamento lento em organizações grandes.
 - **Faixas de exibição:** alta (70 ou mais), média (40 a 69), baixa (abaixo de 40) e N/A (nulo).
+
+**Regras de borda do cálculo:**
+
+- Porte, CNAE e situação cadastral são comparados sem acento e sem diferenciar maiúsculas. Porte sem pontuação configurada (ex.: "NÃO INFORMADO") é N/A.
+- Capital social zero é N/A: na base da Receita, zero é o valor de quem não declara capital (empresário individual, associações etc.), então é falta de dado e não capital baixo. O zero continua gravado no lead e aparece como `valor_bruto` no detalhe.
+- A idade é calculada em anos com fração na data do cálculo; data de abertura no futuro conta como 0 anos.
+- A nota acima da escala (a organização pode ter reduzido a escala depois) é limitada a 100 no pilar.
+- "Sem redes sociais nem site" é penalizado quando não há links em `lead_redes_sociais` e o texto original não tem um `@perfil`.
+- Com a lista de UFs configurada e a UF desconhecida, a penalidade de UF não é aplicada, mas o score fica parcial.
+- O cálculo fica no backend (funções puras testadas); a gravação é feita em lotes pela função SQL `gravar_scores`, que só altera leads da organização informada.
 
 ### 8.6 `config_score` padrão
 
@@ -271,12 +331,51 @@ Nas faixas, cada par é `[limite_superior_exclusivo, pontos]`; `null` é "acima 
 
 ## 9. Enriquecimento por CNPJ
 
-Serviço que consulta a BrasilAPI (`https://brasilapi.com.br/api/cnpj/v1/{cnpj}`) e preenche `razao_social`, `porte`, `capital_social`, `cnae_principal`, `data_abertura`, `cidade`, `uf`, `situacao_cadastral` e `enriquecido_em`. Verificar os campos e limites reais na documentação atual antes de implementar.
+Serviço que consulta a BrasilAPI (`https://brasilapi.com.br/api/cnpj/v1/{cnpj}`, gratuita e sem chave) e preenche as colunas de enriquecimento do lead. A BrasilAPI repassa os dados da Minha Receita (base pública da Receita Federal).
 
-- **Individual** (`POST /leads/:id/enriquecer`): consulta na hora e devolve o lead atualizado.
-- **Em lote** (`POST /leads/enriquecer-lote`): marca como `pendente` os leads da organização ainda não enriquecidos (ou os `ids` informados) e responde 202 na hora. Um processador em segundo plano, dentro do próprio backend, consome a fila do banco um lead por vez, com pausa entre chamadas, timeout, retry com espera crescente (até 3 tentativas, depois `erro`) e `nao_encontrado` para CNPJ inexistente. A fila alterna entre organizações para uma não travar a outra.
-- **Resiliência:** como o estado fica no banco, se o servidor reiniciar ou "dormir" (plano gratuito), o processador retoma os pendentes ao iniciar. Leads presos em `processando` há mais de alguns minutos voltam para `pendente`.
-- **Progresso:** `GET /leads/enriquecimento/status` devolve as contagens por `enriquecimento_status`; o frontend consulta essa rota periodicamente enquanto houver pendentes.
+**De-para da resposta** (campo ausente ou fora do formato vira nulo, ou seja, N/A no score):
+
+| Coluna do lead | Campo da BrasilAPI | Observação |
+| --- | --- | --- |
+| `razao_social` | `razao_social` | |
+| `porte` | `porte` | `MICRO EMPRESA`, `EMPRESA DE PEQUENO PORTE`, `DEMAIS` ou `NÃO INFORMADO` |
+| `capital_social` | `capital_social` (número) | Zero é gravado, mas o score o trata como N/A (seção 8.5) |
+| `cnae_principal` | `cnae_fiscal` (número) | Gravado com 7 dígitos: o zero inicial perdido no número é recomposto (`111301` → `0111301`) |
+| `data_abertura` | `data_inicio_atividade` (`AAAA-MM-DD`) | |
+| `cidade` | `municipio` | |
+| `uf` | `uf` | |
+| `situacao_cadastral` | `descricao_situacao_cadastral` | `ATIVA`, `BAIXADA`, `INAPTA`, `SUSPENSA` ou `NULA` |
+| `enriquecido_em` | (data e hora da consulta) | |
+
+**Resultado de cada consulta:**
+
+| Resposta da BrasilAPI | Situação do lead |
+| --- | --- |
+| 200 | `concluido`: dados gravados e score recalculado |
+| 404 | `nao_encontrado`: CNPJ válido que não está na base da Receita |
+| 400 para CNPJ alfanumérico | `nao_suportado` (o backend já validou os dígitos, então só pode ser falta de suporte) |
+| 403, 408, 429, 5xx, falha de rede, tempo esgotado (10 s) ou resposta ilegível | Passageira: volta para `pendente` com espera de 30 s e depois 2 min; na 3ª tentativa vira `erro` |
+| Outros 4xx | `erro` |
+
+Em `nao_encontrado`, `nao_suportado` e `erro`, o motivo fica em `enriquecimento_erro` e os dados de um enriquecimento anterior são mantidos. A BrasilAPI bloqueia o User-Agent padrão do Node, então o backend envia um próprio.
+
+- **Individual** (`POST /leads/:id/enriquecer`): reserva o lead, consulta na hora e devolve o detalhe atualizado (200, com o resultado em `enriquecimento_status`). Se o lead já estiver em processamento, 409. Se a BrasilAPI estiver fora do ar, o lead entra na fila para nova tentativa e a resposta é 503.
+- **Em lote** (`POST /leads/enriquecer-lote`, corpo opcional `{ ids }` com até 1.000 ids):
+  - sem `ids`, entram os leads da organização nunca solicitados ou que terminaram em `erro`;
+  - com `ids`, entram esses leads, mesmo já enriquecidos (para atualizar os dados);
+  - leads já na fila não entram de novo;
+  - responde 202 com `{ enfileirados }`.
+- **Processador:** roda dentro do próprio backend e consome a fila do banco um lead por vez, com 1 s de pausa entre consultas (cerca de 3.000 leads por hora).
+  - A fila alterna entre organizações (rodízio pela última atendida), para uma importação grande não travar as outras.
+  - Com a BrasilAPI fora do ar, a pausa cresce a cada falha seguida (30 s, 60 s... até 5 min), para não gastar as tentativas de toda a fila na mesma queda.
+- **Resiliência:** o estado fica no banco. Reservar um lead o marca como `processando` com prazo de 5 minutos. Se o servidor cair no meio, o lead volta para `pendente` quando o prazo vence (ou vira `erro`, se já esgotou as tentativas). O processador começa junto com o servidor e retoma a fila sozinho.
+- **Funções SQL** (sem acesso pela API pública):
+  - `enfileirar_enriquecimento`;
+  - `pegar_proximo_enriquecimento`: rodízio, reserva com `skip locked` e recuperação de reservas vencidas;
+  - `reservar_enriquecimento`: reserva do enriquecimento individual;
+  - `contar_enriquecimento`.
+- **Progresso:** `GET /leads/enriquecimento/status` devolve `{ nao_solicitado, pendente, processando, concluido, nao_encontrado, nao_suportado, erro, total }`. O frontend consulta essa rota periodicamente enquanto houver pendentes.
+- **Plano gratuito:** o processador só anda com o servidor acordado. No Render, o servidor dorme após ~15 min sem requisições; enquanto a tela de progresso estiver aberta, as consultas de status o mantêm acordado.
 - Ao concluir cada lead, o score dele é recalculado.
 
 ## 10. API (backend Express)
@@ -299,21 +398,21 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `GET /responsaveis` | O | Lista responsáveis da organização, por nome |
 | `POST /responsaveis` | O | Cadastra responsável (`nome`); 201; 409 se o nome já existir (sem diferenciar maiúsculas) |
 | `GET /leads` | O | Lista com filtros `status`, `busca`, ordenação `ordem` (`score_compensacao`, `nota_final`, `created_at`), `direcao` (`asc`, `desc`), `pagina` (a partir de 1) e `limite` (padrão 20, máximo 100); padrão: `score_compensacao` decrescente; nulos (N/A) sempre por último. A `busca` (até 100 caracteres) procura em `nome_lead`, `nome_decisor`, `razao_social` e no CNPJ sem máscara. Responde `{ leads, total, pagina, limite }`; cada lead inclui `responsavel` (`{ id, nome }` ou nulo) e `lead_redes_sociais` |
-| `GET /leads/enriquecimento/status` | O | Progresso da fila de enriquecimento |
+| `GET /leads/enriquecimento/status` | O | Progresso da fila: quantidade de leads por situação (seção 9) |
 | `GET /leads/:id` | O | Detalhe do lead (todas as colunas, `responsavel` e `lead_redes_sociais`) |
 | `POST /leads` | O | Cadastro manual: `cnpj` e `nome_lead` obrigatórios, mais os campos editáveis; 201 com o detalhe; 409 se o CNPJ já existir na organização |
 | `PUT /leads/:id` | O | Atualiza só os campos editáveis enviados (`null` limpa um campo opcional); `cnpj` não é editável (400) |
 | `DELETE /leads/:id` | O | Exclui o lead (204) |
-| `POST /importacoes/preview` | O | Fase 1 da importação (multipart: `arquivo`) |
-| `POST /importacoes` | O | Fase 2: confirma o mapeamento e processa |
-| `GET /importacoes`, `GET /importacoes/:id` | O | Histórico e detalhe (inclui erros por linha) |
-| `POST /leads/:id/enriquecer` | O | Enriquecimento individual |
-| `POST /leads/enriquecer-lote` | O | Coloca leads na fila de enriquecimento (202) |
-| `POST /leads/:id/calcular-score` | O | Cálculo do score de um lead |
-| `POST /leads/recalcular-score` | O | Recálculo em lote da organização |
+| `POST /importacoes/preview` | O | Fase 1 da importação (multipart: `arquivo`, até 5 MB, `.xlsx` ou `.csv`); não grava nada; 413 se passar de 5 MB |
+| `POST /importacoes` | O | Fase 2 (multipart: `arquivo` e `mapeamento` em JSON): processa e responde 201 com a importação |
+| `GET /importacoes`, `GET /importacoes/:id` | O | Histórico (últimas 100, sem `erros` e `mapeamento`) e detalhe (com erros por linha e o De-Para usado) |
+| `POST /leads/:id/enriquecer` | O | Enriquecimento individual; responde o detalhe do lead (200), 409 se já estiver em processamento, 503 se a BrasilAPI estiver fora do ar (o lead vai para a fila) |
+| `POST /leads/enriquecer-lote` | O | Coloca leads na fila (corpo opcional `{ ids }`, até 1.000); 202 com `{ enfileirados }` (seção 9) |
+| `POST /leads/:id/calcular-score` | O | Recalcula o score de um lead e responde o detalhe do lead |
+| `POST /leads/recalcular-score` | O | Recalcula todos os leads da organização; responde `{ recalculados }` |
 | `GET /dashboard/resumo` | O | Total de leads, contagem por status, média do score, top 10 por compensação, leads sem enriquecimento e leads com score parcial |
 
-Rotas fixas como `/leads/enriquecimento/status` e `/leads/recalcular-score` são registradas antes de `/leads/:id`.
+Rotas fixas como `/leads/enriquecimento/status`, `/leads/enriquecer-lote` e `/leads/recalcular-score` são registradas antes de `/leads/:id`.
 
 **Campos editáveis de um lead** (lista branca de `POST` e `PUT`; outros campos enviados são ignorados):
 
@@ -390,11 +489,11 @@ Os dois projetos devem ter `.env.example` e `.gitignore` que impeçam o commit d
 - **Cadastro de empresas:** assumido como aberto (qualquer pessoa cria sua organização como `admin`). Confirmar se será apenas por convite.
 - **Cobrança e planos:** fora do escopo da primeira versão.
 - **Pesos e faixas do score:** os valores da seção 8 são provisórios; ajustar com a realidade de cada empresa.
-- **Valores de porte da BrasilAPI e suporte a CNPJ alfanumérico:** confirmar na fase 6.
 - **LGPD:** nome e telefone do decisor são dados pessoais; avaliar aviso de privacidade e exclusão a pedido antes de abrir para clientes reais.
 - **E-mails do Supabase Auth:** o envio padrão do plano gratuito tem limite baixo por hora e serve para testes. Para usuários reais (confirmação de cadastro e convites), configurar um SMTP próprio com plano gratuito na fase 11.
 - **Remoção de membros e troca de papel:** ainda sem rota; definir regras (por exemplo, impedir remover o último admin) antes de implementar.
 - **Remoção de links de redes sociais:** os links só são acrescentados; um link digitado errado continua em `lead_redes_sociais`. Avaliar uma rota de exclusão de link na fase 9.
+- **Leads `nao_encontrado`:** não voltam para a fila no lote sem `ids` (a base da Receita só é atualizada de tempos em tempos). Avaliar uma opção "tentar de novo os não encontrados" na fase 9.
 - **Busca sem acento:** a busca de leads diferencia acentos ("sao" não encontra "São"). Avaliar a extensão `unaccent` se fizer falta.
 - **Responsáveis:** sem rota para renomear ou excluir no MVP.
 - **Idioma da interface:** português do Brasil.
