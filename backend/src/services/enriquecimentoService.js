@@ -1,13 +1,25 @@
-// Enriquecimento por CNPJ (especificação, seção 9). A reserva do lead é feita
-// por funções SQL (o estado da fila fica no banco); aqui consulta a BrasilAPI,
-// grava o resultado e recalcula o score.
+// Enriquecimento por CNPJ (especificação, seções 9 e 9.1). A reserva do lead é
+// feita por funções SQL (o estado da fila fica no banco); aqui consulta a
+// BrasilAPI, grava o resultado e recalcula o score.
 
 import { supabase } from '../config/supabase.js';
 import { conflito, resultadoOuErro, servicoIndisponivel } from '../utils/erros.js';
-import { esperaAntesDaProxima } from '../utils/enriquecimento.js';
+import { esperaAntesDaProxima, mudancasNaReceita } from '../utils/enriquecimento.js';
 import { consultarCnpj } from './brasilApiService.js';
 import { obterLead } from './leadsService.js';
 import { recalcularSemInterromper } from './scoreService.js';
+
+// Valores gravados antes da consulta, para detectar mudanças na Receita.
+async function lerAnterior(reserva) {
+  return resultadoOuErro(
+    await supabase
+      .from('leads')
+      .select('enriquecido_em, situacao_cadastral, porte')
+      .eq('id', reserva.id)
+      .eq('organizacao_id', reserva.organizacao_id)
+      .maybeSingle(),
+  );
+}
 
 async function gravarResultado(reserva, campos) {
   resultadoOuErro(
@@ -25,18 +37,26 @@ async function gravarResultado(reserva, campos) {
  * se a falha foi passageira (BrasilAPI fora do ar, limite de taxa...).
  * Falha passageira volta para a fila com espera crescente até esgotar as
  * tentativas; depois disso, o lead fica como "erro".
+ * Se a consulta mudou a situação cadastral ou o porte de um lead já
+ * enriquecido, grava ultima_mudanca_receita; sem mudança, o valor anterior fica.
  */
 export async function processarReserva(reserva) {
   const resultado = await consultarCnpj(reserva.cnpj);
 
   if (resultado.tipo === 'ok') {
-    await gravarResultado(reserva, {
+    const anterior = await lerAnterior(reserva);
+    const agora = new Date().toISOString();
+    const campos = {
       ...resultado.dados,
-      enriquecido_em: new Date().toISOString(),
+      enriquecido_em: agora,
       enriquecimento_status: 'concluido',
       enriquecimento_erro: null,
       enriquecimento_proxima_em: null,
-    });
+    };
+    const mudancas = mudancasNaReceita(anterior, resultado.dados);
+    if (mudancas.length > 0) campos.ultima_mudanca_receita = { em: agora, mudancas };
+
+    await gravarResultado(reserva, campos);
     await recalcularSemInterromper(reserva.organizacao_id, { ids: [reserva.id] });
     return { status: 'concluido', transitorio: false };
   }
