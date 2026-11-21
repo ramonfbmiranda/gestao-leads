@@ -21,3 +21,8 @@ export async function atualizar(req, res) {
   if (Object.keys(dados).length === 0) throw requisicaoInvalida('Nenhum campo válido para atualizar');
   res.json(await organizacaoService.atualizarOrganizacao(req.organizacaoId, dados));
 }
+
+/** GET /organizacao/sugestao-pesos (admin): só sugere, não altera a configuração. */
+export async function sugestaoPesos(req, res) {
+  res.json(await organizacaoService.sugestaoDePesos(req.organizacaoId));
+}

@@ -5,7 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config/supabase.js', () => ({ supabase: { from: vi.fn() } }));
 vi.mock('../src/services/scoreService.js', () => ({
-  CAMPOS_DO_SCORE: ['calculadora_icp', 'calculadora_midias_sociais', 'nome_decisor', 'numero_decisor', 'redes_sociais'],
+  CAMPOS_DO_SCORE: [
+    'calculadora_icp', 'calculadora_midias_sociais', 'nome_decisor', 'numero_decisor', 'redes_sociais',
+    'email_decisor', 'linkedin_decisor',
+  ],
   recalcularScores: vi.fn(),
   recalcularSemInterromper: vi.fn(),
 }));
@@ -167,20 +170,37 @@ describe('criarLead', () => {
 
 describe('atualizarLead e excluirLead', () => {
   it('lead de outra organização (nenhuma linha afetada) responde 404', async () => {
-    const consultas = filaDeConsultas({ data: [], error: null });
+    let consultas = filaDeConsultas({ data: [], error: null });
+    await expect(leadsService.atualizarLead(ORG, LEAD, { nome_decisor: 'Ana' })).rejects.toMatchObject({
+      status: 404,
+    });
+    expect(consultas[0].chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
+
+    // Com status, o lead é lido antes (regras do desfecho): não achou, 404 sem gravar.
+    consultas = filaDeConsultas({ data: null, error: null });
     await expect(leadsService.atualizarLead(ORG, LEAD, { status: 'qualificado' })).rejects.toMatchObject({
       status: 404,
     });
+    expect(consultas).toHaveLength(1);
     expect(consultas[0].chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
   });
 
   it('editar campo que influencia o score recalcula; editar só o status não', async () => {
-    filaDeConsultas({ data: [{ id: LEAD }], error: null }, { data: { id: LEAD }, error: null });
+    filaDeConsultas(
+      { data: { status: 'novo', motivo_descarte: null }, error: null },
+      { data: [{ id: LEAD }], error: null },
+      { data: { id: LEAD }, error: null },
+    );
     await leadsService.atualizarLead(ORG, LEAD, { status: 'qualificado' });
     expect(scoreService.recalcularSemInterromper).not.toHaveBeenCalled();
 
     filaDeConsultas({ data: [{ id: LEAD }], error: null }, { data: { id: LEAD }, error: null });
     await leadsService.atualizarLead(ORG, LEAD, { nome_decisor: null });
+    expect(scoreService.recalcularSemInterromper).toHaveBeenCalledWith(ORG, { ids: [LEAD] });
+
+    scoreService.recalcularSemInterromper.mockClear();
+    filaDeConsultas({ data: [{ id: LEAD }], error: null }, { data: { id: LEAD }, error: null });
+    await leadsService.atualizarLead(ORG, LEAD, { email_decisor: 'ana@exemplo.com' });
     expect(scoreService.recalcularSemInterromper).toHaveBeenCalledWith(ORG, { ids: [LEAD] });
   });
 
@@ -192,5 +212,139 @@ describe('atualizarLead e excluirLead', () => {
   it('exclusão sem linha afetada responde 404', async () => {
     filaDeConsultas({ data: [], error: null });
     await expect(leadsService.excluirLead(ORG, LEAD)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('desfecho (seção 8.10)', () => {
+  const SCORE = {
+    score_valor: 70,
+    score_probabilidade: 60,
+    score_esforco: 20,
+    score_compensacao: 54.1,
+    score_confianca: 90,
+    score_parcial: false,
+    score_detalhes: { versao: 2, faixa: 'media' },
+    score_calculado_em: '2026-11-20T10:00:00Z',
+  };
+  const ORGANIZACAO = { data: { config_score: {} }, error: null };
+  const ok = (data) => ({ data, error: null });
+  // Fila padrão: lê o lead, [organização], grava, devolve o detalhe.
+  const gravacao = (consultas) => consultas.find(({ chamadas }) => chamadas[0][0] === 'update').chamadas[0][1];
+
+  it('descartar sem motivo responde 400 sem gravar', async () => {
+    const consultas = filaDeConsultas(ok({ status: 'em_contato', motivo_descarte: null, ...SCORE }));
+    await expect(leadsService.atualizarLead(ORG, LEAD, { status: 'descartado' })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining('motivo_descarte'),
+    });
+    expect(consultas.map(({ chamadas }) => chamadas[0][0])).toEqual(['select']);
+  });
+
+  it('motivo fora da lista da organização responde 400 com as opções', async () => {
+    filaDeConsultas(
+      ok({ status: 'em_contato', motivo_descarte: null, ...SCORE }),
+      ok({ config_score: { motivos_descarte: ['Preço', 'Prazo'] } }),
+    );
+    await expect(
+      leadsService.atualizarLead(ORG, LEAD, { status: 'descartado', motivo_descarte: 'Sem orçamento' }),
+    ).rejects.toMatchObject({ status: 400, message: expect.stringContaining('Preço, Prazo') });
+  });
+
+  it('descartar grava o motivo como configurado, desfecho_em e a cópia do score', async () => {
+    const consultas = filaDeConsultas(
+      ok({ status: 'em_contato', motivo_descarte: null, ...SCORE }),
+      ORGANIZACAO,
+      ok([{ id: LEAD }]),
+      ok({ id: LEAD }),
+    );
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'descartado', motivo_descarte: 'sem orçamento' });
+    const dados = gravacao(consultas);
+    expect(dados).toEqual({
+      status: 'descartado',
+      motivo_descarte: 'Sem orçamento',
+      desfecho_em: expect.any(String),
+      desfecho_score: SCORE,
+    });
+    expect(Date.now() - new Date(dados.desfecho_em).getTime()).toBeLessThan(5000);
+    expect(consultas[0].chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
+  });
+
+  it('converter não exige motivo; de descartado para convertido grava de novo e limpa o motivo', async () => {
+    let consultas = filaDeConsultas(ok({ status: 'qualificado', motivo_descarte: null, ...SCORE }), ok([{ id: LEAD }]), ok({}));
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'convertido' });
+    expect(gravacao(consultas)).toEqual({ status: 'convertido', desfecho_em: expect.any(String), desfecho_score: SCORE });
+
+    consultas = filaDeConsultas(ok({ status: 'descartado', motivo_descarte: 'Outro', ...SCORE }), ok([{ id: LEAD }]), ok({}));
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'convertido' });
+    expect(gravacao(consultas)).toEqual({
+      status: 'convertido',
+      motivo_descarte: null,
+      desfecho_em: expect.any(String),
+      desfecho_score: SCORE,
+    });
+  });
+
+  it('voltar de um desfecho para o funil limpa desfecho_em, desfecho_score e motivo', async () => {
+    const consultas = filaDeConsultas(
+      ok({ status: 'descartado', motivo_descarte: 'Outro', ...SCORE }),
+      ok([{ id: LEAD }]),
+      ok({}),
+    );
+    // O motivo enviado junto é ignorado: fora de "descartado" não há motivo.
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'em_contato', motivo_descarte: 'Outro' });
+    expect(gravacao(consultas)).toEqual({
+      status: 'em_contato',
+      motivo_descarte: null,
+      desfecho_em: null,
+      desfecho_score: null,
+    });
+  });
+
+  it('lead já descartado com motivo: repetir o status não exige motivo nem refaz o desfecho', async () => {
+    let consultas = filaDeConsultas(ok({ status: 'descartado', motivo_descarte: 'Outro', ...SCORE }), ok([{ id: LEAD }]), ok({}));
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'descartado', nome_decisor: 'Ana' });
+    expect(gravacao(consultas)).toEqual({ status: 'descartado', nome_decisor: 'Ana' });
+
+    // Trocar só o motivo.
+    consultas = filaDeConsultas(
+      ok({ status: 'descartado', motivo_descarte: 'Outro', ...SCORE }),
+      ORGANIZACAO,
+      ok([{ id: LEAD }]),
+      ok({}),
+    );
+    await leadsService.atualizarLead(ORG, LEAD, { motivo_descarte: 'Fora do perfil' });
+    expect(gravacao(consultas)).toEqual({ motivo_descarte: 'Fora do perfil' });
+
+    // Apagar o motivo de um descartado não pode.
+    filaDeConsultas(ok({ status: 'descartado', motivo_descarte: 'Outro', ...SCORE }));
+    await expect(leadsService.atualizarLead(ORG, LEAD, { motivo_descarte: null })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('cadastro já descartado exige motivo', async () => {
+    const consultas = filaDeConsultas();
+    await expect(
+      leadsService.criarLead(ORG, { cnpj: '11222333000181', nome_lead: 'X', status: 'descartado' }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(consultas).toHaveLength(0);
+  });
+
+  it('cadastro já convertido: copia o score depois do primeiro cálculo', async () => {
+    const consultas = filaDeConsultas(ok({ id: LEAD }), ok(SCORE), ok(null), ok({ id: LEAD }));
+    await leadsService.criarLead(ORG, { cnpj: '11222333000181', nome_lead: 'X', status: 'convertido' });
+
+    expect(consultas[0].chamadas[0]).toEqual([
+      'insert',
+      {
+        cnpj: '11222333000181',
+        nome_lead: 'X',
+        status: 'convertido',
+        desfecho_em: expect.any(String),
+        desfecho_score: null,
+        organizacao_id: ORG,
+      },
+    ]);
+    expect(scoreService.recalcularSemInterromper).toHaveBeenCalledWith(ORG, { ids: [LEAD] });
+    expect(consultas[2].chamadas[0]).toEqual(['update', { desfecho_score: SCORE }]);
+    expect(consultas[2].chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
   });
 });

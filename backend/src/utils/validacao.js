@@ -6,6 +6,9 @@ import { requisicaoInvalida } from './erros.js';
 const REGEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Validação simples de propósito: a confirmação real do e-mail é feita pelo Supabase Auth.
 const REGEX_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const REGEX_HOST = /^([a-z0-9-]+\.)+[a-z]{2,}$/;
+// Data (AAAA-MM-DD) ou data e hora com fuso (Z ou ±HH:MM), para não depender do fuso do servidor.
+const REGEX_DATA_HORA = /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:?\d{2}))?$/i;
 
 export function ehUuid(valor) {
   return typeof valor === 'string' && REGEX_UUID.test(valor);
@@ -48,6 +51,67 @@ export function emailValido(valor, campo = 'email') {
     throw requisicaoInvalida(`O campo "${campo}" deve ser um e-mail válido`);
   }
   return email;
+}
+
+/** E-mail em minúsculas, ou null se o texto não parece um e-mail. */
+export function normalizarEmail(texto) {
+  const email = String(texto).trim().toLowerCase();
+  return REGEX_EMAIL.test(email) ? email : null;
+}
+
+/**
+ * Endereço web http ou https. Sem protocolo, recebe "https://"
+ * ("linkedin.com/in/ana" → "https://linkedin.com/in/ana"). null se não for um endereço web.
+ */
+export function normalizarUrlWeb(texto) {
+  const limpo = String(texto).trim();
+  if (limpo === '' || /\s/.test(limpo)) return null;
+  const comProtocolo = /^https?:\/\//i.test(limpo) ? limpo : `https://${limpo}`;
+  let url;
+  try {
+    url = new URL(comProtocolo);
+  } catch {
+    return null;
+  }
+  // "mailto:a@b.com" vira usuário da URL; "javascript:..." não tem domínio.
+  if (url.username || url.password || !REGEX_HOST.test(url.hostname)) return null;
+  return comProtocolo;
+}
+
+/** E-mail opcional (null ou vazio limpa o campo), gravado em minúsculas. */
+export function emailOpcional(valor, campo, { max = 200 } = {}) {
+  const texto = textoOpcional(valor, campo, { max });
+  if (texto === null) return null;
+  const email = normalizarEmail(texto);
+  if (!email) throw requisicaoInvalida(`O campo "${campo}" deve ser um e-mail válido`);
+  return email;
+}
+
+/** Endereço web opcional (null ou vazio limpa o campo). */
+export function urlOpcional(valor, campo, { max = 500 } = {}) {
+  const texto = textoOpcional(valor, campo, { max });
+  if (texto === null) return null;
+  const url = normalizarUrlWeb(texto);
+  if (!url || url.length > max) {
+    throw requisicaoInvalida(`O campo "${campo}" deve ser um endereço web (http ou https) com até ${max} caracteres`);
+  }
+  return url;
+}
+
+/** Data e hora ISO opcional → Date. Datas impossíveis (ex.: 30 de fevereiro) são recusadas. */
+export function dataHoraOpcional(valor, campo) {
+  if (valor === undefined || valor === null) return null;
+  const erro = requisicaoInvalida(
+    `O campo "${campo}" deve ser uma data ISO (AAAA-MM-DD ou AAAA-MM-DDTHH:MM:SS com fuso, ex.: Z)`,
+  );
+  const partes = typeof valor === 'string' ? REGEX_DATA_HORA.exec(valor.trim()) : null;
+  if (!partes) throw erro;
+  const [ano, mes, dia] = partes.slice(1, 4).map(Number);
+  const calendario = new Date(Date.UTC(ano, mes - 1, dia));
+  if (calendario.getUTCMonth() !== mes - 1 || calendario.getUTCDate() !== dia) throw erro;
+  const data = new Date(valor.trim());
+  if (Number.isNaN(data.getTime())) throw erro;
+  return data;
 }
 
 export function umDe(valor, opcoes, campo, { padrao } = {}) {

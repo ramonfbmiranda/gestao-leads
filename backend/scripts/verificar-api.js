@@ -226,12 +226,21 @@ async function verificarEnriquecimento(lojaId) {
       && r.corpo?.uf === 'DF' && r.corpo?.cnae_principal === '6422100' && r.corpo?.porte === 'DEMAIS'
       && r.corpo?.data_abertura === '1966-08-01' && r.corpo?.situacao_cadastral === 'ATIVA' && r.corpo?.enriquecido_em !== null,
     JSON.stringify({ s: r.corpo?.enriquecimento_status, e: r.corpo?.enriquecimento_erro, rs: r.corpo?.razao_social, uf: r.corpo?.uf }));
-  // Valor 100 (porte DEMAIS, capital de 120 bi, 60 anos; CNAE desligado). Probabilidade 80 (ICP 8/10).
-  // Esforço 100: sem número (35), sem nome (25), sem redes (20) e DF fora de SP (20).
-  // Compensação = √(100 × 80) ÷ 2 = 44,72.
-  conferir('score recalculado com o pilar de valor (44,72, média geométrica)',
-    r.corpo?.score_valor === 100 && r.corpo?.score_compensacao === 44.72 && r.corpo?.score_detalhes?.formula === 'media_geometrica',
+  // Valor 100 (porte DEMAIS, capital de 120 bi, 60 anos). Probabilidade 80 (ICP 8/10 da planilha).
+  // O esforço depende do que a Receita traz: telefone da empresa reduz o contato (35 → 28) e um
+  // diretor entre os sócios reduz o "sem nome" (25 → 12,5). Sem redes (20) e DF fora de SP (20).
+  const esperado = Math.round((Math.sqrt(100 * 80) / (1 + (r.corpo?.score_esforco ?? 0) / 100)) * 100) / 100;
+  conferir(`score recalculado com o pilar de valor (média geométrica, ${esperado})`,
+    r.corpo?.score_valor === 100 && r.corpo?.score_probabilidade === 80 && r.corpo?.score_compensacao === esperado
+      && r.corpo?.score_detalhes?.formula === 'media_geometrica' && r.corpo?.score_detalhes?.versao === 2,
     JSON.stringify({ v: r.corpo?.score_valor, p: r.corpo?.score_probabilidade, e: r.corpo?.score_esforco, c: r.corpo?.score_compensacao }));
+  conferir('sócios da Receita só com nome e qualificação',
+    Array.isArray(r.corpo?.socios) && r.corpo.socios.length > 0
+      && r.corpo.socios.every((socio) => Object.keys(socio).sort().join() === 'nome,qualificacao'),
+    JSON.stringify(r.corpo?.socios?.slice(0, 2)));
+  const semNome = r.corpo?.score_detalhes?.esforco?.penalidades?.find((p) => p.penalidade === 'sem_nome_decisor');
+  conferir('decisor provável pela Receita reduz a penalidade de nome', semNome?.pontos === 12.5 && semNome?.detalhe?.includes('Decisor provável'),
+    JSON.stringify(semNome));
 
   r = await esperarStatus('POST /leads (CNPJ válido inexistente)', 'POST', '/leads', { cnpj: CNPJ_INEXISTENTE, nome_lead: 'Fantasma' }, 201);
   r = await esperarStatus('POST /leads/:id/enriquecer (inexistente)', 'POST', `/leads/${r.corpo?.id}/enriquecer`, undefined, 200);
@@ -271,8 +280,105 @@ async function verificarEnriquecimento(lojaId) {
   const capital = r.corpo?.score_detalhes?.valor?.fatores?.find((fator) => fator.fator === 'capital_social');
   conferir('capital zero tratado como N/A', capital?.situacao === 'na', JSON.stringify(capital));
 
+  await verificarAvaliacao(bancoId);
+  await verificarInteracoesEDesfecho(bancoId);
+
   r = await esperarStatus('POST /leads/enriquecer-lote com ids (reenriquecer)', 'POST', '/leads/enriquecer-lote', { ids: [bancoId] }, 202);
   conferir('lead já enriquecido entra de novo quando pedido pelo id', r.corpo?.enfileirados === 1, JSON.stringify(r.corpo));
+}
+
+// Avaliação do lead no sistema (revisão 7), usando o lead do Banco do Brasil já enriquecido.
+const RESPOSTAS = {
+  orcamento: 'confirmado', decisor: 'sim', necessidade: 'alguma', prazo: 'ate_3_meses',
+  perfil_ativo: 'sim', frequencia: 'nao', site: 'sim', anuncios: 'nao', origem_contato: 'indicacao',
+};
+
+async function verificarAvaliacao(bancoId) {
+  console.log('\nAvaliação do lead');
+  let r = await esperarStatus('GET /avaliacao/modelo', 'GET', '/avaliacao/modelo', undefined, 200);
+  conferir('modelo padrão com 9 perguntas em 3 blocos',
+    r.corpo?.perguntas?.length === 9 && new Set(r.corpo.perguntas.map((p) => p.bloco)).size === 3);
+
+  await esperarStatus('PUT /leads/:id/avaliacao com opção inválida', 'PUT', `/leads/${bancoId}/avaliacao`, { respostas: { orcamento: 'talvez' } }, 400);
+  await esperarStatus('PUT /leads/:id/avaliacao de lead inexistente', 'PUT', `/leads/${randomUUID()}/avaliacao`, { respostas: {} }, 404);
+
+  r = await esperarStatus('PUT /leads/:id/avaliacao', 'PUT', `/leads/${bancoId}/avaliacao`, { respostas: RESPOSTAS, ticket_estimado: 10000 }, 200);
+  const fatores = r.corpo?.score_detalhes?.probabilidade?.fatores ?? [];
+  const qualificacao = fatores.find((f) => f.fator === 'qualificacao');
+  const midias = fatores.find((f) => f.fator === 'midias_sociais');
+  // qualificação 83,5; mídias 55; ICP 80 (planilha) → probabilidade = 80×0,35 + 83,5×0,40 + 55×0,25 = 75,15
+  conferir('respostas viram qualificação (83,5) e mídias (55) com origem "avaliacao"',
+    qualificacao?.pontos === 83.5 && qualificacao?.origem === 'avaliacao' && midias?.pontos === 55 && midias?.origem === 'avaliacao',
+    JSON.stringify({ qualificacao, midias }));
+  conferir('probabilidade recalculada (75,15)', r.corpo?.score_probabilidade === 75.15, String(r.corpo?.score_probabilidade));
+  conferir('avaliação gravada com data e ticket', r.corpo?.avaliado_em !== null && Number(r.corpo?.ticket_estimado) === 10000);
+  const relacionamento = r.corpo?.score_detalhes?.esforco?.penalidades?.find((p) => p.penalidade === 'relacionamento:origem_contato');
+  conferir('indicação soma 5 ao esforço', relacionamento?.pontos === 5, JSON.stringify(relacionamento));
+  conferir('estimativa em reais pelo ticket do lead e índice de probabilidade',
+    r.corpo?.score_detalhes?.financeiro?.origem_ticket === 'lead' && r.corpo?.score_detalhes?.financeiro?.valor_esperado === 7515,
+    JSON.stringify(r.corpo?.score_detalhes?.financeiro));
+  conferir('confiança gravada', typeof r.corpo?.score_confianca === 'number' && r.corpo.score_confianca > 0, String(r.corpo?.score_confianca));
+
+  // Perfil ideal com o CNAE do banco: o ICP passa a ser calculado pelo sistema (100).
+  await esperarStatus('PUT /organizacao com perfil ideal', 'PUT', '/organizacao', {
+    config_score: { esforco: { ufs_atendidas: ['SP'] }, perfil_ideal: { setores: ['6422-1/00'] } },
+  }, 200);
+  r = await esperarStatus('POST /leads/:id/calcular-score com perfil ideal', 'POST', `/leads/${bancoId}/calcular-score`, undefined, 200);
+  const icp = r.corpo?.score_detalhes?.probabilidade?.fatores?.find((f) => f.fator === 'icp');
+  conferir('ICP pelo perfil ideal prevalece sobre a planilha (100, origem "sistema")', icp?.pontos === 100 && icp?.origem === 'sistema', JSON.stringify(icp));
+  await esperarStatus('PUT /organizacao com chave antiga recusada', 'PUT', '/organizacao', { config_score: { valor: { cnaes_prioritarios: [] } } }, 400);
+}
+
+// Interações, prioridade, desfecho e aprendizado (revisão 7), ainda com o lead do Banco do Brasil.
+async function verificarInteracoesEDesfecho(bancoId) {
+  console.log('\nInterações, prioridade e desfecho');
+  let r = await esperarStatus('GET /leads/prioridade', 'GET', '/leads/prioridade', undefined, 200);
+  const naFila = r.corpo?.abordar?.find((item) => item.id === bancoId);
+  conferir('lead novo sem interação está em "abordar"', naFila?.motivo === 'nenhuma interação registrada', JSON.stringify(naFila));
+
+  await esperarStatus('POST /leads/:id/interacoes com tipo inválido', 'POST', `/leads/${bancoId}/interacoes`, { tipo: 'telegrama', teve_resposta: false }, 400);
+  await esperarStatus('POST /leads/:id/interacoes no futuro', 'POST', `/leads/${bancoId}/interacoes`,
+    { tipo: 'ligacao', teve_resposta: false, ocorreu_em: new Date(Date.now() + 86_400_000).toISOString() }, 400);
+  let ultima;
+  for (let i = 1; i <= 3; i += 1) {
+    r = await esperarStatus(`POST /leads/:id/interacoes (tentativa ${i} sem resposta)`, 'POST', `/leads/${bancoId}/interacoes`, { tipo: 'ligacao', teve_resposta: false }, 201);
+    ultima = r.corpo?.id;
+  }
+  r = await esperarStatus('GET /leads/:id depois das tentativas', 'GET', `/leads/${bancoId}`, undefined, 200);
+  const tentativas = r.corpo?.score_detalhes?.esforco?.penalidades?.find((p) => p.penalidade === 'tentativas_sem_resposta');
+  // 3 tentativas, 2 toleradas: +5 no esforço.
+  conferir('3 tentativas sem resposta resumidas no lead e +5 no esforço',
+    r.corpo?.tentativas_sem_resposta === 3 && r.corpo?.ultima_interacao_em !== null && tentativas?.pontos === 5,
+    JSON.stringify({ t: r.corpo?.tentativas_sem_resposta, p: tentativas }));
+  r = await esperarStatus('GET /leads/:id/interacoes', 'GET', `/leads/${bancoId}/interacoes`, undefined, 200);
+  conferir('3 interações listadas', r.corpo?.length === 3);
+
+  await esperarStatus('POST /leads/:id/interacoes (respondeu)', 'POST', `/leads/${bancoId}/interacoes`, { tipo: 'whatsapp', teve_resposta: true, observacao: 'Pediu proposta' }, 201);
+  r = await esperarStatus('GET /leads/:id depois da resposta', 'GET', `/leads/${bancoId}`, undefined, 200);
+  conferir('resposta zera as tentativas', r.corpo?.tentativas_sem_resposta === 0, String(r.corpo?.tentativas_sem_resposta));
+  await esperarStatus('DELETE /leads/:id/interacoes/:id', 'DELETE', `/leads/${bancoId}/interacoes/${ultima}`, undefined, 204);
+  await esperarStatus('DELETE de interação inexistente', 'DELETE', `/leads/${bancoId}/interacoes/${randomUUID()}`, undefined, 404);
+
+  await esperarStatus('PUT /leads/:id descartado sem motivo', 'PUT', `/leads/${bancoId}`, { status: 'descartado' }, 400);
+  await esperarStatus('PUT /leads/:id com motivo fora da lista', 'PUT', `/leads/${bancoId}`, { status: 'descartado', motivo_descarte: 'Inventado' }, 400);
+  r = await esperarStatus('PUT /leads/:id descartado com motivo', 'PUT', `/leads/${bancoId}`, { status: 'descartado', motivo_descarte: 'Sem orçamento' }, 200);
+  conferir('desfecho gravado com a cópia do score',
+    r.corpo?.desfecho_em !== null && r.corpo?.motivo_descarte === 'Sem orçamento'
+      && r.corpo?.desfecho_score?.score_compensacao === r.corpo?.score_compensacao && typeof r.corpo?.desfecho_score?.score_detalhes?.faixa === 'string',
+    JSON.stringify({ em: r.corpo?.desfecho_em, m: r.corpo?.motivo_descarte }));
+
+  r = await esperarStatus('GET /dashboard/conversao', 'GET', '/dashboard/conversao', undefined, 200);
+  const descartados = Object.values(r.corpo?.faixas ?? {}).reduce((soma, faixa) => soma + (faixa?.descartados ?? 0), 0);
+  conferir('1 descartado contado por faixa e por motivo',
+    descartados === 1 && r.corpo?.motivos?.[0]?.motivo === 'Sem orçamento' && r.corpo.motivos[0].total === 1, JSON.stringify(r.corpo));
+  r = await esperarStatus('GET /organizacao/sugestao-pesos', 'GET', '/organizacao/sugestao-pesos', undefined, 200);
+  conferir('sugestão de pesos pede mais desfechos', r.corpo?.suficiente === false, JSON.stringify(r.corpo));
+
+  r = await esperarStatus('PUT /leads/:id reaberto', 'PUT', `/leads/${bancoId}`, { status: 'em_contato' }, 200);
+  conferir('reabrir limpa o desfecho e o motivo',
+    r.corpo?.desfecho_em === null && r.corpo?.desfecho_score === null && r.corpo?.motivo_descarte === null);
+  r = await esperarStatus('GET /leads/prioridade depois do contato', 'GET', '/leads/prioridade', undefined, 200);
+  conferir('lead em contato saiu de "abordar"', !r.corpo?.abordar?.some((item) => item.id === bancoId));
 }
 
 // Chama o processador até a fila da organização esvaziar (no máximo 4 minutos,

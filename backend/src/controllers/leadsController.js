@@ -1,15 +1,18 @@
 import * as leadsService from '../services/leadsService.js';
+import * as prioridadeService from '../services/prioridadeService.js';
 import { naoEncontrado, requisicaoInvalida } from '../utils/erros.js';
 import {
   cnpjObrigatorio,
   corpoObjeto,
   ehUuid,
+  emailOpcional,
   inteiroDaConsulta,
   numeroOpcional,
   opcaoDaConsulta,
   textoObrigatorio,
   textoOpcional,
   umDe,
+  urlOpcional,
 } from '../utils/validacao.js';
 
 export const STATUS_LEAD = ['novo', 'em_contato', 'qualificado', 'descartado', 'convertido'];
@@ -38,6 +41,15 @@ function camposEditaveis(corpo) {
   }
   if (tem('status')) dados.status = umDe(corpo.status, STATUS_LEAD, 'status');
   if (tem('responsavel_id')) dados.responsavel_id = responsavelOpcional(corpo.responsavel_id);
+  if (tem('email_decisor')) dados.email_decisor = emailOpcional(corpo.email_decisor, 'email_decisor', { max: 200 });
+  if (tem('linkedin_decisor')) {
+    dados.linkedin_decisor = urlOpcional(corpo.linkedin_decisor, 'linkedin_decisor', { max: 500 });
+  }
+  // Se é um dos motivos da organização (e se é exigido) o serviço confere.
+  if (tem('motivo_descarte')) {
+    dados.motivo_descarte =
+      textoOpcional(corpo.motivo_descarte, 'motivo_descarte', { max: 60 })?.replace(/\s+/g, ' ') ?? null;
+  }
   return dados;
 }
 
@@ -104,4 +116,15 @@ export async function calcularScore(req, res) {
 
 export async function recalcularScores(req, res) {
   res.json(await leadsService.recalcularScoresDaOrganizacao(req.organizacaoId));
+}
+
+/** GET /leads/prioridade: listas "abordar" e "retomar" (seção 8.10). */
+export async function prioridade(req, res) {
+  const { query } = req;
+  const responsavelId = query.responsavel_id === undefined || query.responsavel_id === '' ? null : query.responsavel_id;
+  if (responsavelId !== null && !ehUuid(responsavelId)) {
+    throw requisicaoInvalida('O parâmetro "responsavel_id" deve ser um id válido');
+  }
+  const limite = inteiroDaConsulta(query.limite, 'limite', { padrao: 10, min: 1, max: 50 });
+  res.json(await prioridadeService.listarPrioridade(req.organizacaoId, { responsavelId, limite }));
 }

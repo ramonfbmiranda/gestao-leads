@@ -4,6 +4,7 @@
 import { cnpjValido, normalizarCnpj } from './cnpj.js';
 import { requisicaoInvalida } from './erros.js';
 import { extrairRedesSociais } from './redesSociais.js';
+import { normalizarEmail, normalizarUrlWeb } from './validacao.js';
 
 // Campos do modelo padrão (seção 4.4), na ordem em que a tela mostra.
 export const CAMPOS_IMPORTACAO = [
@@ -17,6 +18,8 @@ export const CAMPOS_IMPORTACAO = [
   { campo: 'calculadora_midias_sociais', rotulo: 'Calculadora - Mídias Sociais', obrigatorio: false },
   { campo: 'nota_final', rotulo: 'Nota final', obrigatorio: false },
   { campo: 'responsavel_id', rotulo: 'Quem mapeou?', obrigatorio: false },
+  { campo: 'email_decisor', rotulo: 'E-mail do Decisor', obrigatorio: false },
+  { campo: 'linkedin_decisor', rotulo: 'LinkedIn do Decisor', obrigatorio: false },
 ];
 
 const ROTULO = Object.fromEntries(CAMPOS_IMPORTACAO.map(({ campo, rotulo }) => [campo, rotulo]));
@@ -39,12 +42,24 @@ const SINONIMOS = {
   ],
   nota_final: ['nota final', 'nota', 'pontuacao', 'pontuacao final', 'score'],
   responsavel_id: ['quem mapeou', 'mapeado por', 'responsavel', 'vendedor', 'sdr'],
+  email_decisor: [
+    'e mail do decisor', 'email do decisor', 'e mail decisor', 'email decisor',
+    'e mail do contato', 'email do contato', 'e mail', 'email',
+  ],
+  linkedin_decisor: [
+    'linkedin do decisor', 'linkedin decisor', 'linkedin do contato', 'perfil do linkedin', 'perfil linkedin', 'linkedin',
+  ],
 };
 
 // Tamanhos máximos: os mesmos do cadastro manual.
 const TAMANHO_MAXIMO = {
   nome_lead: 200, nome_decisor: 150, numero_decisor: 50, link_cnpj: 500, redes_sociais: 2000, responsavel_id: 150,
+  email_decisor: 200, linkedin_decisor: 500,
 };
+
+// Contatos do decisor: normalizados como no cadastro manual; valor inválido invalida a linha.
+const CONTATOS = { email_decisor: normalizarEmail, linkedin_decisor: normalizarUrlWeb };
+
 const NOTAS = { calculadora_icp: 'escala_icp_max', calculadora_midias_sociais: 'escala_midias_max', nota_final: 'escala_nota_max' };
 const TAMANHO_MAXIMO_EXTRA = 1000;
 const MAXIMO_ERROS_GUARDADOS = 1000;
@@ -192,6 +207,15 @@ function montarLead(valores, indicePorCampo, extras, opcoes) {
     if (valorDo(campo) !== null) lead[campo] = texto(valorDo(campo), campo);
   }
   if (lead.redes_sociais) lead.redes = extrairRedesSociais(lead.redes_sociais);
+
+  for (const [campo, normalizar] of Object.entries(CONTATOS)) {
+    if (valorDo(campo) === null) continue;
+    const valor = normalizar(texto(valorDo(campo), campo));
+    if (valor === null || valor.length > TAMANHO_MAXIMO[campo]) {
+      throw new ErroLinha(`${ROTULO[campo]} inválido: ${String(valorDo(campo)).trim()}`);
+    }
+    lead[campo] = valor;
+  }
 
   for (const [campo, chaveEscala] of Object.entries(NOTAS)) {
     if (valorDo(campo) === null) continue;

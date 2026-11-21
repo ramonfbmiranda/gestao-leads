@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config/supabase.js', () => ({ supabase: { auth: { getClaims: vi.fn() } } }));
 vi.mock('../src/services/contaService.js', () => ({ buscarPerfil: vi.fn() }));
-vi.mock('../src/services/organizacaoService.js', () => ({ atualizarOrganizacao: vi.fn() }));
+vi.mock('../src/services/organizacaoService.js', () => ({ atualizarOrganizacao: vi.fn(), sugestaoDePesos: vi.fn() }));
+vi.mock('../src/services/prioridadeService.js', () => ({ listarPrioridade: vi.fn() }));
+vi.mock('../src/services/dashboardService.js', () => ({ conversaoPorFaixa: vi.fn() }));
 vi.mock('../src/services/responsaveisService.js', () => ({
   listarResponsaveis: vi.fn(),
   criarResponsavel: vi.fn(),
@@ -26,6 +28,8 @@ const contaService = await import('../src/services/contaService.js');
 const organizacaoService = await import('../src/services/organizacaoService.js');
 const responsaveisService = await import('../src/services/responsaveisService.js');
 const leadsService = await import('../src/services/leadsService.js');
+const prioridadeService = await import('../src/services/prioridadeService.js');
+const dashboardService = await import('../src/services/dashboardService.js');
 const { criarApp } = await import('../src/app.js');
 
 const app = criarApp();
@@ -273,5 +277,120 @@ describe('GET, PUT e DELETE /leads/:id', () => {
     const resposta = await request(app).delete(`/leads/${LEAD}`).set('Authorization', TOKEN);
     expect(resposta.status).toBe(204);
     expect(leadsService.excluirLead).toHaveBeenCalledWith(ORG, LEAD);
+  });
+});
+
+describe('campos da revisão 7 (contato do decisor e motivo do descarte)', () => {
+  it('normaliza e-mail, LinkedIn e motivo; desfecho e resumo das interações nunca vêm do cliente', async () => {
+    logado();
+    leadsService.criarLead.mockResolvedValue({ id: LEAD });
+    const resposta = await post('/leads', {
+      cnpj: '11222333000181',
+      nome_lead: 'Padaria',
+      status: 'descartado',
+      email_decisor: ' Ana@Exemplo.COM ',
+      linkedin_decisor: 'linkedin.com/in/ana',
+      motivo_descarte: '  Sem   orçamento ',
+      desfecho_em: '2020-01-01T00:00:00Z',
+      desfecho_score: { score_compensacao: 100 },
+      ultima_interacao_em: '2020-01-01T00:00:00Z',
+      tentativas_sem_resposta: 0,
+      score_confianca: 100,
+    });
+    expect(resposta.status).toBe(201);
+    expect(leadsService.criarLead).toHaveBeenCalledWith(ORG, {
+      cnpj: '11222333000181',
+      nome_lead: 'Padaria',
+      status: 'descartado',
+      email_decisor: 'ana@exemplo.com',
+      linkedin_decisor: 'https://linkedin.com/in/ana',
+      motivo_descarte: 'Sem orçamento',
+    });
+  });
+
+  it('null limpa os contatos', async () => {
+    logado();
+    leadsService.atualizarLead.mockResolvedValue({ id: LEAD });
+    await put(`/leads/${LEAD}`, { email_decisor: null, linkedin_decisor: '' });
+    expect(leadsService.atualizarLead).toHaveBeenCalledWith(ORG, LEAD, { email_decisor: null, linkedin_decisor: null });
+  });
+
+  it.each([
+    [{ email_decisor: 'ana@' }, 'email_decisor'],
+    [{ email_decisor: `${'a'.repeat(195)}@x.com` }, 'email_decisor'],
+    [{ linkedin_decisor: 'javascript:alert(1)' }, 'linkedin_decisor'],
+    [{ linkedin_decisor: `https://linkedin.com/${'a'.repeat(480)}` }, 'linkedin_decisor'],
+    [{ motivo_descarte: 'x'.repeat(61) }, 'motivo_descarte'],
+    [{ motivo_descarte: 5 }, 'motivo_descarte'],
+  ])('PUT recusa %j com 400', async (corpo, trecho) => {
+    logado();
+    const resposta = await put(`/leads/${LEAD}`, corpo);
+    expect(resposta.status).toBe(400);
+    expect(resposta.body.erro).toContain(trecho);
+    expect(leadsService.atualizarLead).not.toHaveBeenCalled();
+  });
+
+  it('só campos de desfecho ou de resumo: nada para atualizar', async () => {
+    logado();
+    const resposta = await put(`/leads/${LEAD}`, {
+      desfecho_em: null,
+      desfecho_score: null,
+      ultima_interacao_em: null,
+      tentativas_sem_resposta: 0,
+    });
+    expect(resposta.status).toBe(400);
+    expect(resposta.body.erro).toBe('Nenhum campo válido para atualizar');
+  });
+});
+
+describe('GET /leads/prioridade', () => {
+  it('usa os padrões e não cai em /leads/:id', async () => {
+    logado();
+    prioridadeService.listarPrioridade.mockResolvedValue({ abordar: [], retomar: [] });
+    const resposta = await get('/leads/prioridade');
+    expect(resposta.status).toBe(200);
+    expect(resposta.body).toEqual({ abordar: [], retomar: [] });
+    expect(prioridadeService.listarPrioridade).toHaveBeenCalledWith(ORG, { responsavelId: null, limite: 10 });
+    expect(leadsService.obterLead).not.toHaveBeenCalled();
+  });
+
+  it('repassa responsável e limite', async () => {
+    logado();
+    prioridadeService.listarPrioridade.mockResolvedValue({ abordar: [], retomar: [] });
+    await get(`/leads/prioridade?responsavel_id=${LEAD}&limite=50`);
+    expect(prioridadeService.listarPrioridade).toHaveBeenCalledWith(ORG, { responsavelId: LEAD, limite: 50 });
+  });
+
+  it.each([['limite=51'], ['limite=0'], ['responsavel_id=abc'], [`responsavel_id=${LEAD}&responsavel_id=${LEAD}`]])(
+    'recusa ?%s com 400',
+    async (consulta) => {
+      logado();
+      const resposta = await get(`/leads/prioridade?${consulta}`);
+      expect(resposta.status).toBe(400);
+      expect(prioridadeService.listarPrioridade).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('GET /organizacao/sugestao-pesos e /dashboard/conversao', () => {
+  it('sugestão de pesos é só para admin, na organização do perfil', async () => {
+    logado('membro');
+    expect((await get('/organizacao/sugestao-pesos')).status).toBe(403);
+    expect(organizacaoService.sugestaoDePesos).not.toHaveBeenCalled();
+
+    logado('admin');
+    organizacaoService.sugestaoDePesos.mockResolvedValue({ suficiente: false, convertidos: 2, descartados: 1, minimo: 30 });
+    const resposta = await get(`/organizacao/sugestao-pesos?organizacao_id=${OUTRA_ORG}`);
+    expect(resposta.status).toBe(200);
+    expect(resposta.body).toEqual({ suficiente: false, convertidos: 2, descartados: 1, minimo: 30 });
+    expect(organizacaoService.sugestaoDePesos).toHaveBeenCalledWith(ORG);
+  });
+
+  it('conversão por faixa: qualquer membro, na organização do perfil', async () => {
+    logado('membro');
+    dashboardService.conversaoPorFaixa.mockResolvedValue({ faixas: {}, motivos: [] });
+    const resposta = await get('/dashboard/conversao');
+    expect(resposta.status).toBe(200);
+    expect(dashboardService.conversaoPorFaixa).toHaveBeenCalledWith(ORG);
   });
 });

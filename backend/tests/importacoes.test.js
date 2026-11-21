@@ -84,7 +84,11 @@ describe('POST /importacoes/preview', () => {
       total_linhas: 2,
       mapeamento_sugerido: { cnpj: 'CNPJ', nome_lead: 'Nome do Lead', nota_final: 'Nota final', nome_decisor: null },
     });
-    expect(resposta.body.campos).toHaveLength(10);
+    expect(resposta.body.campos).toHaveLength(12);
+    expect(resposta.body.campos.slice(-2)).toEqual([
+      { campo: 'email_decisor', rotulo: 'E-mail do Decisor', obrigatorio: false },
+      { campo: 'linkedin_decisor', rotulo: 'LinkedIn do Decisor', obrigatorio: false },
+    ]);
     expect(supabase.from).not.toHaveBeenCalled();
   });
 

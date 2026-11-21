@@ -15,6 +15,7 @@ const OPCOES = { escalas: { escala_icp_max: 10, escala_midias_max: 100, escala_n
 const COLUNAS_PADRAO = [
   'CNPJ', 'Link - Informações do CNPJ', 'Nome do Lead', 'Nome do Decisor', 'Número do Decisor',
   'Redes Sociais', 'Calculadora - ICP', 'Calculadora - Mídias Sociais', 'Nota final', 'Quem mapeou?',
+  'E-mail do Decisor', 'LinkedIn do Decisor',
 ];
 
 describe('normalizarCabecalho', () => {
@@ -37,6 +38,8 @@ describe('sugerirMapeamento', () => {
       calculadora_midias_sociais: 'Calculadora - Mídias Sociais',
       nota_final: 'Nota final',
       responsavel_id: 'Quem mapeou?',
+      email_decisor: 'E-mail do Decisor',
+      linkedin_decisor: 'LinkedIn do Decisor',
     });
   });
 
@@ -46,6 +49,16 @@ describe('sugerirMapeamento', () => {
     expect(sugestao.cnpj).toBe('cnpj');
     expect(sugestao.numero_decisor).toBe('Telefone');
     expect(sugestao.nota_final).toBeNull();
+    expect(sugestao.email_decisor).toBeNull();
+  });
+
+  it('reconhece e-mail e LinkedIn do decisor por sinônimos', () => {
+    const sugestao = sugerirMapeamento(['CNPJ', 'Empresa', 'Email', 'Perfil do LinkedIn']);
+    expect(sugestao.email_decisor).toBe('Email');
+    expect(sugestao.linkedin_decisor).toBe('Perfil do LinkedIn');
+    // Uma coluna "LinkedIn" vai para o decisor, não para as redes sociais.
+    expect(sugerirMapeamento(['LinkedIn']).linkedin_decisor).toBe('LinkedIn');
+    expect(sugerirMapeamento(['LinkedIn']).redes_sociais).toBeNull();
   });
 
   it('não sugere a mesma coluna para dois campos', () => {
@@ -225,6 +238,34 @@ describe('montarLeads', () => {
     expect(erros).toEqual([
       { linha: 2, motivo: 'CNPJ duplicado na planilha (prevalece a linha 4)' },
       { linha: 3, motivo: 'CNPJ duplicado na planilha (prevalece a linha 4)' },
+    ]);
+  });
+
+  it('e-mail e LinkedIn do decisor: normalizados; inválido derruba só a linha; vazio não entra', () => {
+    const colunasContato = ['CNPJ', 'Empresa', 'E-mail', 'LinkedIn'];
+    const mapeamentoContato = { cnpj: 'CNPJ', nome_lead: 'Empresa', email_decisor: 'E-mail', linkedin_decisor: 'LinkedIn' };
+    const { leads, erros } = montarLeads(
+      {
+        colunas: colunasContato,
+        linhas: [
+          linha(2, ['11222333000181', 'Com contatos', ' Ana@Exemplo.COM ', 'linkedin.com/in/ana']),
+          linha(3, ['12ABC34501DE35', 'Sem contatos', null, null]),
+          linha(4, ['01234567000195', 'E-mail ruim', 'ana@', null]),
+          linha(5, ['00123456000149', 'LinkedIn ruim', null, 'javascript:alert(1)']),
+          linha(6, ['00000000000191', 'E-mail longo', `${'a'.repeat(195)}@x.com`, null]),
+        ],
+      },
+      mapeamentoContato,
+      OPCOES,
+    );
+    expect(leads).toHaveLength(2);
+    expect(leads[0]).toMatchObject({ email_decisor: 'ana@exemplo.com', linkedin_decisor: 'https://linkedin.com/in/ana' });
+    expect(leads[1]).not.toHaveProperty('email_decisor');
+    expect(leads[1]).not.toHaveProperty('linkedin_decisor');
+    expect(erros).toEqual([
+      { linha: 4, motivo: 'E-mail do Decisor inválido: ana@' },
+      { linha: 5, motivo: 'LinkedIn do Decisor inválido: javascript:alert(1)' },
+      { linha: 6, motivo: 'E-mail do Decisor com mais de 200 caracteres' },
     ]);
   });
 
