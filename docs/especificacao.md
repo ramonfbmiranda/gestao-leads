@@ -35,7 +35,7 @@ A gestão do funil (status, responsáveis, importação, interações) é um com
 | Autenticação | Supabase Auth (e-mail e senha, com confirmação de e-mail) |
 | Backend | Node.js com Express, módulos ES (`import`/`export`), `@supabase/supabase-js` com a chave secreta do projeto |
 | Upload e planilhas | `multer` (em memória) e `xlsx` (SheetJS) para `.xlsx` e `.csv`. O SheetJS é instalado pelo CDN oficial (`cdn.sheetjs.com`): a versão do registro npm está parada e tem falhas de segurança conhecidas |
-| Frontend | React com Vite, Tailwind CSS, React Router, axios |
+| Frontend | React com Vite, Tailwind CSS, React Router, axios (versões e requisitos na seção 11.1) |
 | Autenticação no frontend | `@supabase/supabase-js` com a chave pública, só para login, cadastro e sessão |
 | Dados públicos | BrasilAPI (consulta de CNPJ) |
 | Testes | `vitest` para as funções puras (validação de CNPJ, score, normalização) |
@@ -556,13 +556,14 @@ Legenda de acesso: **P** = pública; **T** = só token (`autenticar`); **O** = t
 | `GET /me` | T | Usuário, perfil e organização; sem perfil, `perfil: null` e `convites_pendentes` |
 | `POST /onboarding` | T | Cria a organização e o perfil `admin` (`nome_organizacao` obrigatório, `nome` opcional); 201 com o mesmo formato de `/me`; 403 sem e-mail confirmado; 409 se já tiver perfil |
 | `POST /convites/:id/aceitar` | T | Aceita convite destinado ao e-mail do usuário e cria o perfil (`nome` opcional); responde no formato de `/me`; 404 se o convite não for dele ou não estiver pendente |
+| `GET /organizacao` | O | A organização com `config_score` (só o que ela mudou), `config_padrao` e `config_efetivo` (padrão mesclado), para o frontend exibir faixas e motivos e editar a configuração (fase 10). Para salvar, o frontend envia em `PUT /organizacao` só as seções que diferem do padrão |
 | `PUT /organizacao` | A | Atualiza só os campos enviados entre `nome`, escalas (> 0) e `config_score` (validado, seção 8.6); responde a organização |
 | `GET /membros` | A | Lista membros |
 | `POST /membros/convite` | A | Convida por e-mail (`email`, `papel` padrão `membro`); 201 com `{ convite, email_enviado }` |
 | `GET /convites`, `DELETE /convites/:id` | A | Lista e cancela (204) convites pendentes |
 | `GET /responsaveis` | O | Lista responsáveis da organização, por nome |
 | `POST /responsaveis` | O | Cadastra responsável (`nome`); 201; 409 se o nome já existir (sem diferenciar maiúsculas) |
-| `GET /leads` | O | Lista com filtros `status`, `busca`, ordenação `ordem` (`score_compensacao`, `nota_final`, `created_at`), `direcao` (`asc`, `desc`), `pagina` (a partir de 1) e `limite` (padrão 20, máximo 100); padrão: `score_compensacao` decrescente; nulos (N/A) sempre por último. A `busca` (até 100 caracteres) procura em `nome_lead`, `nome_decisor`, `razao_social` e no CNPJ sem máscara. Responde `{ leads, total, pagina, limite }`; cada lead inclui `responsavel` (`{ id, nome }` ou nulo) e `lead_redes_sociais` |
+| `GET /leads` | O | Lista com filtros `status`, `faixa` (`alta`, `media`, `baixa` ou `na`, pelos limites de `faixas` da organização; revisão 7), `busca`, ordenação `ordem` (`score_compensacao`, `nota_final`, `created_at`), `direcao` (`asc`, `desc`), `pagina` (a partir de 1) e `limite` (padrão 20, máximo 100); padrão: `score_compensacao` decrescente; nulos (N/A) sempre por último. A `busca` (até 100 caracteres) procura em `nome_lead`, `nome_decisor`, `razao_social` e no CNPJ sem máscara. Responde `{ leads, total, pagina, limite }`; cada lead inclui `responsavel` (`{ id, nome }` ou nulo) e `lead_redes_sociais` |
 | `GET /leads/enriquecimento/status` | O | Progresso da fila: quantidade de leads por situação (seção 9) |
 | `GET /leads/:id` | O | Detalhe do lead (todas as colunas, `responsavel` e `lead_redes_sociais`) |
 | `POST /leads` | O | Cadastro manual: `cnpj` e `nome_lead` obrigatórios, mais os campos editáveis; 201 com o detalhe; 409 se o CNPJ já existir na organização |
@@ -601,19 +602,78 @@ Os links do texto de `redes_sociais` são acrescentados em `lead_redes_sociais` 
 
 ## 11. Frontend (React, Vite, Tailwind)
 
-A aplicação tem um serviço de API (axios) com URL base do `.env` e um interceptor que anexa o token da sessão do Supabase Auth. As funções do serviço correspondem exatamente às rotas da seção 10. O visual (layout, cores e componentes) segue o protótipo aprovado na fase 7.
+A aplicação tem um serviço de API (axios) com URL base do `.env` e um interceptor que anexa o token da sessão do Supabase Auth. As funções do serviço correspondem exatamente às rotas da seção 10. O visual (layout, cores e componentes) segue o protótipo aprovado na fase 8.
 
 **Telas:**
 
 - **Login e cadastro** (Supabase Auth), com aviso para confirmar o e-mail. Após o login, se `GET /me` vier sem perfil: tela de convites pendentes ou de onboarding (seção 6).
 - **Layout** com cabeçalho "Gestão de Leads", nome da organização e usuário logado, e uma barra "Sites Úteis" com links externos (`target="_blank"`, `rel="noopener noreferrer"`) para casadosdados.com.br, econodata.com.br, cnpj.biz e consultasocio.com.
 - **Dashboard:** cards (total, por status, média do score, sem enriquecimento, score parcial), ranking dos 10 leads que mais compensam e, na revisão 7, conversão por faixa e mudanças recentes na Receita.
-- **Lista de leads:** tabela com Compensação, Nome do Lead, CNPJ, Nome do Decisor, Redes Sociais, Nota Final (original), Responsável, Status e Ações. Filtro por status, busca com debounce e paginação. O score aparece como barra ou badge por faixa (incluindo N/A e selo de parcial); a nota final original usa cores condicionais (verde, amarelo, vermelho), respeitando a escala da organização; o status aparece como badge colorida. CNPJ exibido com máscara.
+- **Nome na interface:** o score de compensação aparece como **"Potencial"** (alto, médio, baixo, N/A); no banco e na API os nomes continuam os do contrato.
+- **Lista de leads:** filtro por faixa de potencial (`faixa`) além do status; tabela com Compensação, Nome do Lead, CNPJ, Nome do Decisor, Redes Sociais, Nota Final (original), Responsável, Status e Ações. Filtro por status, busca com debounce e paginação. O score aparece como barra ou badge por faixa (incluindo N/A e selo de parcial); a nota final original usa cores condicionais (verde, amarelo, vermelho), respeitando a escala da organização; o status aparece como badge colorida. CNPJ exibido com máscara.
 - **Detalhe do lead** (painel lateral ou página): o medidor de compensação em destaque, com os três pilares, a contribuição de cada fator (N/A onde faltar dado), a confiança, as sugestões de como aumentar e a estimativa em reais, tudo a partir de `score_detalhes`. Abaixo, dados originais, dados da Receita (incluindo o decisor provável, com a opção de usá-lo), redes sociais e a lista de interações com o botão de registrar uma nova. Ações: avaliar, avançar status, descartar (pedindo o motivo), editar, excluir com confirmação, enriquecer e recalcular.
 - **Avaliar lead** (revisão 7): o questionário em blocos (qualificação, mídias, relacionamento), montado a partir de `GET /avaliacao/modelo`, com o ticket estimado; ao salvar, mostra o novo valor do medidor.
 - **Prioridade** (revisão 7): as listas "abordar" e "retomar" de `GET /leads/prioridade`, filtráveis por responsável.
 - **Importação em 3 passos:** (1) enviar o arquivo; (2) preview com amostra e um select por campo do modelo padrão, pré-preenchido pelo `mapeamento_sugerido`, validando `cnpj` e `nome_lead`; (3) resultado com inseridos, atualizados, ignorados e erros por linha. Inclui o histórico de importações e a opção de enfileirar o enriquecimento e recalcular o score dos leads importados, com barra de progresso.
 - **Configurações** (admin): escalas das calculadoras, pesos e faixas do score, perfil ideal (setores, portes, idade mínima), perguntas da avaliação, canais e penalidades de esforço, UFs atendidas, ticket por porte e horas, motivos de descarte, reconsulta, equivalência de letras, membros e convites. Mostra também a sugestão de pesos quando houver desfechos suficientes.
+
+### 11.1 Visual aprovado (fase 8) e base do frontend (fase 9)
+
+- **Interface neutra, potencial em azul:**
+  - Botões, menus e textos são em preto e branco (tinta).
+  - O azul é reservado ao medidor de potencial, numa escala de um tom só: baixo, médio e alto vão do claro para o escuro. Essa escala foi validada para daltonismo nos dois temas.
+  - Verde, âmbar e vermelho ficaram de fora das faixas porque reprovaram no teste de daltonismo. Continuam só na nota final da planilha.
+- **A faixa nunca depende só da cor:**
+  - um ícone de sinal com 1, 2 ou 3 barras;
+  - o nome escrito (Baixo, Médio, Alto ou N/A);
+  - `role="meter"` com `aria-valuetext` (ex.: "47,1 de 100, potencial médio, parcial").
+- **Tema claro e escuro:**
+  - O escuro é quase preto, não azul-marinho, e cada tema tem as próprias cores.
+  - A escolha fica no navegador (`gl-tema`); sem escolha, segue o sistema operacional.
+  - O tema é aplicado antes da primeira pintura, para não piscar.
+- **Medidores:**
+  - O arco semicircular aparece só no destaque do detalhe e na avaliação.
+  - Na tabela e nos rankings, o medidor é uma barra com as divisões de 40 e 70.
+  - As animações são curtas (arco em 0,75 s), não rodam nas tabelas e se desligam com `prefers-reduced-motion`.
+- **Telas do protótipo:**
+  - login e primeiro acesso;
+  - potencial (dashboard);
+  - lista com filtros de potencial e de status;
+  - detalhe com o medidor, a confiança, a estimativa em reais, as sugestões, o fator a fator e as interações;
+  - avaliar lead;
+  - prioridade;
+  - importação;
+  - configurações em 6 abas.
+- **Base do frontend** (`frontend/`): Vite 8, React 19, React Router 8 (modo de dados, `createBrowserRouter`; o pacote `react-router-dom` não existe mais e o React Router 8 exige Node 22.22 ou mais), Tailwind CSS 4 e axios.
+  - Os tokens de cor ficam em variáveis CSS (`:root` e `.dark`) ligadas aos utilitários do Tailwind por `@theme inline`.
+  - Organização de pastas: `src/config`, `src/servicos` (`api.js`, `supabase.js`), `src/contextos` (tema e autenticação), `src/componentes`, `src/paginas`, `src/rotas` e `src/utils`.
+- **Rotas do frontend:**
+  - `/entrar` (só sem sessão);
+  - `/primeiro-acesso` (com sessão e sem perfil);
+  - as telas do sistema, com perfil: `/`, `/leads`, `/leads/:id`, `/leads/:id/avaliar`, `/prioridade`, `/importacao` e `/configuracoes`.
+- **Erros:** a API devolve `{ erro }`, e o serviço converte em `{ status, mensagem }`. Os erros do Supabase Auth são traduzidos pelo código (credenciais inválidas, e-mail não confirmado, conta já existente, limite de envio).
+
+### 11.2 Telas (fase 10)
+
+- **Configuração da organização:** um contexto carrega `GET /organizacao` uma vez no layout. Todas as telas leem dali as faixas do medidor, os motivos de descarte e os prazos da prioridade.
+- **Lista de leads:**
+  - os filtros de faixa e status, a busca (com espera de 300 ms), a ordenação e a página vão para os parâmetros de `GET /leads`;
+  - "Novo lead" abre um formulário;
+  - "Enriquecer pendentes" chama `POST /leads/enriquecer-lote`.
+- **Detalhe:**
+  - o medidor em arco, os pilares, a fórmula, a estimativa em reais, as sugestões e o fator a fator saem de `score_detalhes`;
+  - o "decisor provável" pode ser copiado para o nome do decisor;
+  - "Avançar" segue o funil (novo → em contato → em negociação → convertido);
+  - "Descartar" pede o motivo.
+- **Avaliar:**
+  - a prévia do medidor é uma simulação no navegador, feita com o `score_detalhes` atual e as respostas marcadas;
+  - o valor oficial é o que o backend calcula ao salvar;
+  - a pergunta sem resposta é enviada como `null` ("não sei").
+- **Importação:** depois de importar, a tela consulta `GET /leads/enriquecimento/status` a cada 4 segundos enquanto houver leads na fila.
+- **Configurações** (só admin), em 6 abas: cálculo do potencial, perfil ideal, perguntas da avaliação, negócio e funil, escalas da planilha e equipe.
+  - Edita-se a configuração efetiva. Ao salvar, vão para `PUT /organizacao` só as seções de topo que diferem do padrão; voltar ao padrão é salvar a configuração sem essas seções.
+  - Depois de salvar, a tela oferece recalcular todos os leads (`POST /leads/recalcular-score`), porque o potencial gravado não muda sozinho.
+- **Dashboard** (`/`): fica para a fase 11, com os gráficos.
 
 ## 12. Deploy (tudo gratuito)
 
