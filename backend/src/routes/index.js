@@ -39,7 +39,9 @@ rotas.delete('/convites/:id', ...somenteAdmin, membros.cancelarConvite);
 // Com perfil (qualquer membro da organização)
 rotas.get('/responsaveis', ...comPerfil, responsaveis.listar);
 rotas.post('/responsaveis', ...comPerfil, responsaveis.criar);
+rotas.get('/organizacao', ...comPerfil, organizacao.obter);
 rotas.get('/avaliacao/modelo', ...comPerfil, avaliacao.modelo);
+rotas.get('/dashboard/resumo', ...comPerfil, dashboard.resumo);
 rotas.get('/dashboard/conversao', ...comPerfil, dashboard.conversao);
 
 // Rotas fixas de /leads (ex.: /leads/enriquecimento/status) entram antes de /leads/:id.

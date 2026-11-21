@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config/supabase.js', () => ({ supabase: { auth: { getClaims: vi.fn() } } }));
 vi.mock('../src/services/contaService.js', () => ({ buscarPerfil: vi.fn() }));
-vi.mock('../src/services/organizacaoService.js', () => ({ atualizarOrganizacao: vi.fn(), sugestaoDePesos: vi.fn() }));
+vi.mock('../src/services/organizacaoService.js', () => ({ atualizarOrganizacao: vi.fn(), sugestaoDePesos: vi.fn(), obterOrganizacaoComConfig: vi.fn() }));
 vi.mock('../src/services/prioridadeService.js', () => ({ listarPrioridade: vi.fn() }));
-vi.mock('../src/services/dashboardService.js', () => ({ conversaoPorFaixa: vi.fn() }));
+vi.mock('../src/services/dashboardService.js', () => ({ conversaoPorFaixa: vi.fn(), resumoDoDashboard: vi.fn() }));
 vi.mock('../src/services/responsaveisService.js', () => ({
   listarResponsaveis: vi.fn(),
   criarResponsavel: vi.fn(),
@@ -53,6 +53,16 @@ const put = (rota, corpo) => request(app).put(rota).set('Authorization', TOKEN).
 
 beforeEach(() => {
   vi.resetAllMocks();
+});
+
+describe('GET /organizacao', () => {
+  it('qualquer membro lê a organização da própria conta', async () => {
+    logado('membro');
+    organizacaoService.obterOrganizacaoComConfig.mockResolvedValue({ id: ORG, config_efetivo: {} });
+    const resposta = await get(`/organizacao?organizacao_id=${OUTRA_ORG}`);
+    expect(resposta.status).toBe(200);
+    expect(organizacaoService.obterOrganizacaoComConfig).toHaveBeenCalledWith(ORG);
+  });
 });
 
 describe('PUT /organizacao', () => {
@@ -128,6 +138,7 @@ describe('GET /leads', () => {
     expect(resposta.status).toBe(200);
     expect(leadsService.listarLeads).toHaveBeenCalledWith(ORG, {
       status: null,
+      faixa: null,
       busca: null,
       ordem: 'score_compensacao',
       direcao: 'desc',
@@ -139,9 +150,10 @@ describe('GET /leads', () => {
   it('repassa filtros válidos', async () => {
     logado();
     leadsService.listarLeads.mockResolvedValue({ leads: [], total: 0, pagina: 3, limite: 50 });
-    await get('/leads?status=qualificado&busca=%20padaria%20&ordem=nota_final&direcao=asc&pagina=3&limite=50');
+    await get('/leads?status=qualificado&faixa=media&busca=%20padaria%20&ordem=nota_final&direcao=asc&pagina=3&limite=50');
     expect(leadsService.listarLeads).toHaveBeenCalledWith(ORG, {
       status: 'qualificado',
+      faixa: 'media',
       busca: 'padaria',
       ordem: 'nota_final',
       direcao: 'asc',
@@ -152,6 +164,7 @@ describe('GET /leads', () => {
 
   it.each([
     ['status=ganho'],
+    ['faixa=altissima'],
     ['ordem=nome_lead'],
     ['direcao=cima'],
     ['pagina=0'],
@@ -392,5 +405,19 @@ describe('GET /organizacao/sugestao-pesos e /dashboard/conversao', () => {
     const resposta = await get('/dashboard/conversao');
     expect(resposta.status).toBe(200);
     expect(dashboardService.conversaoPorFaixa).toHaveBeenCalledWith(ORG);
+  });
+
+  it('resumo do dashboard: qualquer membro, na organização do perfil', async () => {
+    logado('membro');
+    dashboardService.resumoDoDashboard.mockResolvedValue({ total: 0, faixas: { alta: 70, media: 40 } });
+    const resposta = await get(`/dashboard/resumo?organizacao_id=${OUTRA_ORG}`);
+    expect(resposta.status).toBe(200);
+    expect(resposta.body.total).toBe(0);
+    expect(dashboardService.resumoDoDashboard).toHaveBeenCalledWith(ORG);
+  });
+
+  it('resumo do dashboard sem login: 401', async () => {
+    expect((await request(app).get('/dashboard/resumo')).status).toBe(401);
+    expect(dashboardService.resumoDoDashboard).not.toHaveBeenCalled();
   });
 });

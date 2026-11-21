@@ -70,6 +70,7 @@ export async function listar(req, res) {
   }
   const filtros = {
     status: opcaoDaConsulta(query.status, STATUS_LEAD, 'status', { padrao: null }),
+    faixa: opcaoDaConsulta(query.faixa, ['alta', 'media', 'baixa', 'na'], 'faixa', { padrao: null }),
     busca,
     ordem: opcaoDaConsulta(query.ordem, ORDENS, 'ordem', { padrao: 'score_compensacao' }),
     direcao: opcaoDaConsulta(query.direcao, ['asc', 'desc'], 'direcao', { padrao: 'desc' }),

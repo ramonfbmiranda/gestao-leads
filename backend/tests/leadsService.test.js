@@ -95,6 +95,28 @@ describe('listarLeads', () => {
     expect(chamadas).toContainEqual(['range', 20, 39]);
   });
 
+  it('sem filtro de faixa não consulta a organização', async () => {
+    const consultas = filaDeConsultas({ data: [], error: null, count: 0 });
+    await leadsService.listarLeads(ORG, filtros);
+    expect(consultas.map((c) => c.tabela)).toEqual(['leads']);
+  });
+
+  it.each([
+    ['alta', [['gte', 'score_compensacao', 75]]],
+    ['media', [['gte', 'score_compensacao', 50], ['lt', 'score_compensacao', 75]]],
+    ['baixa', [['lt', 'score_compensacao', 50]]],
+    ['na', [['is', 'score_compensacao', null]]],
+  ])('filtra a faixa %s com os limites da organização', async (faixa, esperadas) => {
+    const consultas = filaDeConsultas(
+      { data: { config_score: { faixas: { alta: 75, media: 50 } } }, error: null },
+      { data: [], error: null, count: 0 },
+    );
+    await leadsService.listarLeads(ORG, { ...filtros, faixa });
+    const { chamadas } = consultas[1];
+    for (const chamada of esperadas) expect(chamadas).toContainEqual(chamada);
+    expect(chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
+  });
+
   it('página além do fim devolve lista vazia com o total', async () => {
     filaDeConsultas(
       { data: null, error: { code: 'PGRST103', message: 'range not satisfiable' }, count: null },

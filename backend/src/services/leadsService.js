@@ -58,8 +58,26 @@ export function filtroDeBusca(termo) {
   return condicoes.join(',');
 }
 
-export async function listarLeads(organizacaoId, { status, busca, ordem, direcao, pagina, limite }) {
+export const FAIXAS_POTENCIAL = ['alta', 'media', 'baixa', 'na'];
+
+/**
+ * Aplica o filtro de faixa de potencial com os limites da organização:
+ * alta ≥ faixas.alta; média entre faixas.media e faixas.alta; baixa abaixo de
+ * faixas.media; N/A sem compensação calculada.
+ */
+export function filtrarPorFaixa(consulta, faixa, faixas) {
+  if (faixa === 'na') return consulta.is('score_compensacao', null);
+  if (faixa === 'alta') return consulta.gte('score_compensacao', faixas.alta);
+  if (faixa === 'media') return consulta.gte('score_compensacao', faixas.media).lt('score_compensacao', faixas.alta);
+  return consulta.lt('score_compensacao', faixas.media);
+}
+
+export async function listarLeads(organizacaoId, { status, faixa = null, busca, ordem, direcao, pagina, limite }) {
   const inicio = (pagina - 1) * limite;
+  // Só busca a organização quando precisa dos limites das faixas.
+  const faixas = faixa
+    ? mesclarConfigScore((await buscarOrganizacao(organizacaoId, 'config_score')).config_score ?? {}).faixas
+    : null;
 
   const montarConsulta = (opcoes) => {
     let consulta = supabase
@@ -67,6 +85,7 @@ export async function listarLeads(organizacaoId, { status, busca, ordem, direcao
       .select(`${COLUNAS_LISTA}, ${RELACOES}`, opcoes)
       .eq('organizacao_id', organizacaoId);
     if (status) consulta = consulta.eq('status', status);
+    if (faixa) consulta = filtrarPorFaixa(consulta, faixa, faixas);
     const filtro = busca ? filtroDeBusca(busca) : null;
     if (filtro) consulta = consulta.or(filtro);
     return consulta;

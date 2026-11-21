@@ -22,6 +22,11 @@ export async function atualizar(req, res) {
   res.json(await organizacaoService.atualizarOrganizacao(req.organizacaoId, dados));
 }
 
+/** GET /organizacao (qualquer membro): organização e configuração efetiva do score. */
+export async function obter(req, res) {
+  res.json(await organizacaoService.obterOrganizacaoComConfig(req.organizacaoId));
+}
+
 /** GET /organizacao/sugestao-pesos (admin): só sugere, não altera a configuração. */
 export async function sugestaoPesos(req, res) {
   res.json(await organizacaoService.sugestaoDePesos(req.organizacaoId));

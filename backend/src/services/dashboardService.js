@@ -1,8 +1,23 @@
-// Números do dashboard. A conversão por faixa (seção 8.10) vem da função SQL
-// contar_desfechos, a mesma que o score usa para a chance de fechar.
+// Números do dashboard. O resumo vem da função SQL resumo_dashboard; a
+// conversão por faixa (seção 8.10), de contar_desfechos, a mesma que o score
+// usa para a chance de fechar.
 
 import { supabase } from '../config/supabase.js';
+import { mesclarConfigScore } from '../utils/configScore.js';
 import { resultadoOuErro } from '../utils/erros.js';
+import { buscarOrganizacao } from './organizacaoService.js';
+
+/**
+ * GET /dashboard/resumo. As faixas seguem os limites atuais da organização
+ * e voltam na resposta, para a tela desenhar com os mesmos limites.
+ */
+export async function resumoDoDashboard(organizacaoId) {
+  const { faixas } = mesclarConfigScore((await buscarOrganizacao(organizacaoId, 'config_score')).config_score ?? {});
+  const resumo = resultadoOuErro(
+    await supabase.rpc('resumo_dashboard', { p_organizacao_id: organizacaoId, p_alta: faixas.alta, p_media: faixas.media }),
+  );
+  return { ...resumo, faixas };
+}
 
 export const FAIXAS = ['alta', 'media', 'baixa', 'na'];
 

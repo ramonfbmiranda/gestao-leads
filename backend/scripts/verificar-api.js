@@ -119,6 +119,12 @@ async function executar() {
   conferir('busca por nome com acento e espaço', r.corpo?.total === 1);
   r = await esperarStatus('GET /leads?busca com sintaxe de filtro', 'GET', `/leads?busca=${encodeURIComponent('a),id.eq.x')}`, undefined, 200);
   conferir('busca maliciosa não quebra nem vaza', r.corpo?.total === 0);
+  r = await esperarStatus('GET /leads?faixa=media', 'GET', '/leads?faixa=media', undefined, 200);
+  // O lead com compensação 50 está na faixa média (40 a 69); o de CNPJ numérico ainda é N/A.
+  conferir('filtro por faixa média', r.corpo?.total === 1 && r.corpo?.leads?.[0]?.id === leadId, JSON.stringify(r.corpo?.total));
+  r = await esperarStatus('GET /leads?faixa=na', 'GET', '/leads?faixa=na', undefined, 200);
+  conferir('filtro por faixa N/A', r.corpo?.total === 1 && r.corpo?.leads?.[0]?.cnpj === CNPJ_NUMERICO);
+  await esperarStatus('GET /leads?faixa=inventada', 'GET', '/leads?faixa=inventada', undefined, 400);
   r = await esperarStatus('GET /leads?pagina=50', 'GET', '/leads?pagina=50', undefined, 200);
   conferir('página além do fim vem vazia com total', r.corpo?.leads?.length === 0 && r.corpo?.total === 2);
 
@@ -371,6 +377,14 @@ async function verificarInteracoesEDesfecho(bancoId) {
   const descartados = Object.values(r.corpo?.faixas ?? {}).reduce((soma, faixa) => soma + (faixa?.descartados ?? 0), 0);
   conferir('1 descartado contado por faixa e por motivo',
     descartados === 1 && r.corpo?.motivos?.[0]?.motivo === 'Sem orçamento' && r.corpo.motivos[0].total === 1, JSON.stringify(r.corpo));
+  r = await esperarStatus('GET /dashboard/resumo', 'GET', '/dashboard/resumo', undefined, 200);
+  const soma = (objeto) => Object.values(objeto ?? {}).reduce((total, n) => total + n, 0);
+  conferir('resumo: status, faixas e enriquecimento fecham com os totais',
+    r.corpo?.por_status?.descartado >= 1 && soma(r.corpo?.por_status) === r.corpo?.total
+      && soma(r.corpo?.por_faixa) === r.corpo?.em_aberto && soma(r.corpo?.enriquecimento) === r.corpo?.total
+      && r.corpo?.distribuicao?.length === 10 && typeof r.corpo?.faixas?.alta === 'number'
+      && !r.corpo?.top?.some((lead) => lead.id === bancoId),
+    JSON.stringify({ total: r.corpo?.total, status: r.corpo?.por_status, faixa: r.corpo?.por_faixa }));
   r = await esperarStatus('GET /organizacao/sugestao-pesos', 'GET', '/organizacao/sugestao-pesos', undefined, 200);
   conferir('sugestão de pesos pede mais desfechos', r.corpo?.suficiente === false, JSON.stringify(r.corpo));
 

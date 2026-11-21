@@ -14,6 +14,20 @@ export async function buscarOrganizacao(organizacaoId, colunas = COLUNAS_ORGANIZ
   );
 }
 
+/**
+ * GET /organizacao: a organização com a configuração do score em três formas:
+ * `config_score` (só o que a organização mudou), `config_padrao` e
+ * `config_efetivo` (padrão mesclado), para o frontend mostrar e editar.
+ */
+export async function obterOrganizacaoComConfig(organizacaoId) {
+  const organizacao = await buscarOrganizacao(organizacaoId);
+  return {
+    ...organizacao,
+    config_padrao: mesclarConfigScore({}),
+    config_efetivo: mesclarConfigScore(organizacao.config_score ?? {}),
+  };
+}
+
 /** `dados` já validado pelo controller (lista branca: nome, escalas e config_score). */
 export async function atualizarOrganizacao(organizacaoId, dados) {
   return resultadoOuErro(
