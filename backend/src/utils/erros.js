@@ -12,6 +12,7 @@ export const naoAutenticado = (mensagem = 'Não autenticado') => new ErroHttp(40
 export const acessoNegado = (mensagem = 'Acesso negado') => new ErroHttp(403, mensagem);
 export const naoEncontrado = (mensagem = 'Recurso não encontrado') => new ErroHttp(404, mensagem);
 export const conflito = (mensagem) => new ErroHttp(409, mensagem);
+export const servicoIndisponivel = (mensagem) => new ErroHttp(503, mensagem);
 
 // Códigos do Postgres (via PostgREST) mais comuns e o status HTTP equivalente.
 const STATUS_POR_CODIGO = {
