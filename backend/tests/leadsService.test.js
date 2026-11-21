@@ -4,8 +4,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../src/config/supabase.js', () => ({ supabase: { from: vi.fn() } }));
+vi.mock('../src/services/scoreService.js', () => ({
+  CAMPOS_DO_SCORE: ['calculadora_icp', 'calculadora_midias_sociais', 'nome_decisor', 'numero_decisor', 'redes_sociais'],
+  recalcularScores: vi.fn(),
+  recalcularSemInterromper: vi.fn(),
+}));
 
 const { supabase } = await import('../src/config/supabase.js');
+const scoreService = await import('../src/services/scoreService.js');
 const leadsService = await import('../src/services/leadsService.js');
 
 const ORG = '22222222-2222-4222-8222-222222222222';
@@ -141,6 +147,7 @@ describe('criarLead', () => {
       [{ lead_id: LEAD, plataforma: 'instagram', url: 'https://instagram.com/x' }],
       { onConflict: 'lead_id,url', ignoreDuplicates: true },
     ]);
+    expect(scoreService.recalcularSemInterromper).toHaveBeenCalledWith(ORG, { ids: [LEAD] });
   });
 
   it('se gravar os links falhar, desfaz o lead', async () => {
@@ -165,6 +172,21 @@ describe('atualizarLead e excluirLead', () => {
       status: 404,
     });
     expect(consultas[0].chamadas).toContainEqual(['eq', 'organizacao_id', ORG]);
+  });
+
+  it('editar campo que influencia o score recalcula; editar só o status não', async () => {
+    filaDeConsultas({ data: [{ id: LEAD }], error: null }, { data: { id: LEAD }, error: null });
+    await leadsService.atualizarLead(ORG, LEAD, { status: 'qualificado' });
+    expect(scoreService.recalcularSemInterromper).not.toHaveBeenCalled();
+
+    filaDeConsultas({ data: [{ id: LEAD }], error: null }, { data: { id: LEAD }, error: null });
+    await leadsService.atualizarLead(ORG, LEAD, { nome_decisor: null });
+    expect(scoreService.recalcularSemInterromper).toHaveBeenCalledWith(ORG, { ids: [LEAD] });
+  });
+
+  it('calcular score de lead inexistente responde 404', async () => {
+    scoreService.recalcularScores.mockResolvedValue(0);
+    await expect(leadsService.calcularScoreDoLead(ORG, LEAD)).rejects.toMatchObject({ status: 404 });
   });
 
   it('exclusão sem linha afetada responde 404', async () => {

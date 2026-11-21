@@ -5,6 +5,7 @@ import { supabase } from '../config/supabase.js';
 import { naoEncontrado, requisicaoInvalida, resultadoOuErro } from '../utils/erros.js';
 import { extrairRedesSociais } from '../utils/redesSociais.js';
 import { buscarOrganizacao } from './organizacaoService.js';
+import { CAMPOS_DO_SCORE, recalcularScores, recalcularSemInterromper } from './scoreService.js';
 
 const RELACOES =
   'responsavel:responsaveis!leads_responsavel_fk (id, nome), lead_redes_sociais (id, plataforma, url, created_at)';
@@ -142,6 +143,7 @@ export async function criarLead(organizacaoId, dados) {
     await supabase.from('leads').delete().eq('id', id).eq('organizacao_id', organizacaoId);
     throw erro;
   }
+  await recalcularSemInterromper(organizacaoId, { ids: [id] });
   return obterLead(organizacaoId, id);
 }
 
@@ -160,7 +162,22 @@ export async function atualizarLead(organizacaoId, leadId, dados) {
 
   // Se falhar aqui, repetir a mesma requisição completa os links (é idempotente).
   if (dados.redes_sociais) await adicionarRedesSociais(leadId, dados.redes_sociais);
+  if (CAMPOS_DO_SCORE.some((campo) => Object.hasOwn(dados, campo))) {
+    await recalcularSemInterromper(organizacaoId, { ids: [leadId] });
+  }
   return obterLead(organizacaoId, leadId);
+}
+
+/** POST /leads/:id/calcular-score: recalcula na hora e devolve o lead. */
+export async function calcularScoreDoLead(organizacaoId, leadId) {
+  const gravados = await recalcularScores(organizacaoId, { ids: [leadId] });
+  if (gravados === 0) throw naoEncontrado('Lead não encontrado');
+  return obterLead(organizacaoId, leadId);
+}
+
+/** POST /leads/recalcular-score: todos os leads da organização. */
+export async function recalcularScoresDaOrganizacao(organizacaoId) {
+  return { recalculados: await recalcularScores(organizacaoId) };
 }
 
 export async function excluirLead(organizacaoId, leadId) {

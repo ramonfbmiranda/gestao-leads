@@ -17,6 +17,8 @@ vi.mock('../src/services/leadsService.js', () => ({
   criarLead: vi.fn(),
   atualizarLead: vi.fn(),
   excluirLead: vi.fn(),
+  calcularScoreDoLead: vi.fn(),
+  recalcularScoresDaOrganizacao: vi.fn(),
 }));
 
 const { supabase } = await import('../src/config/supabase.js');
@@ -245,6 +247,24 @@ describe('GET, PUT e DELETE /leads/:id', () => {
     const resposta = await put(`/leads/${LEAD}`, { organizacao_id: OUTRA_ORG });
     expect(resposta.status).toBe(400);
     expect(resposta.body.erro).toBe('Nenhum campo válido para atualizar');
+  });
+
+  it('POST /leads/recalcular-score recalcula a organização do perfil (não cai em /leads/:id)', async () => {
+    logado();
+    leadsService.recalcularScoresDaOrganizacao.mockResolvedValue({ recalculados: 3 });
+    const resposta = await post('/leads/recalcular-score', { organizacao_id: OUTRA_ORG });
+    expect(resposta.status).toBe(200);
+    expect(resposta.body).toEqual({ recalculados: 3 });
+    expect(leadsService.recalcularScoresDaOrganizacao).toHaveBeenCalledWith(ORG);
+  });
+
+  it('POST /leads/:id/calcular-score', async () => {
+    logado();
+    leadsService.calcularScoreDoLead.mockResolvedValue({ id: LEAD, score_compensacao: 50 });
+    const resposta = await post(`/leads/${LEAD}/calcular-score`);
+    expect(resposta.status).toBe(200);
+    expect(leadsService.calcularScoreDoLead).toHaveBeenCalledWith(ORG, LEAD);
+    expect((await post('/leads/abc/calcular-score')).status).toBe(404);
   });
 
   it('exclusão responde 204', async () => {

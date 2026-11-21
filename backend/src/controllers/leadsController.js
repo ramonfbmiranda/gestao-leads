@@ -97,3 +97,11 @@ export async function excluir(req, res) {
   await leadsService.excluirLead(req.organizacaoId, idDoLead(req));
   res.status(204).end();
 }
+
+export async function calcularScore(req, res) {
+  res.json(await leadsService.calcularScoreDoLead(req.organizacaoId, idDoLead(req)));
+}
+
+export async function recalcularScores(req, res) {
+  res.json(await leadsService.recalcularScoresDaOrganizacao(req.organizacaoId));
+}

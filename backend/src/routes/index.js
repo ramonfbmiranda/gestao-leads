@@ -4,12 +4,15 @@
 
 import { Router } from 'express';
 import * as conta from '../controllers/contaController.js';
+import * as enriquecimento from '../controllers/enriquecimentoController.js';
+import * as importacoes from '../controllers/importacoesController.js';
 import * as leads from '../controllers/leadsController.js';
 import * as membros from '../controllers/membrosController.js';
 import * as organizacao from '../controllers/organizacaoController.js';
 import * as responsaveis from '../controllers/responsaveisController.js';
 import * as sistema from '../controllers/sistemaController.js';
 import { autenticar, comPerfil, somenteAdmin } from '../middlewares/autenticacao.js';
+import { receberPlanilha } from '../middlewares/upload.js';
 
 export const rotas = Router();
 
@@ -36,6 +39,17 @@ rotas.post('/responsaveis', ...comPerfil, responsaveis.criar);
 // Rotas fixas de /leads (ex.: /leads/enriquecimento/status) entram antes de /leads/:id.
 rotas.get('/leads', ...comPerfil, leads.listar);
 rotas.post('/leads', ...comPerfil, leads.criar);
+rotas.get('/leads/enriquecimento/status', ...comPerfil, enriquecimento.status);
+rotas.post('/leads/enriquecer-lote', ...comPerfil, enriquecimento.enfileirar);
+rotas.post('/leads/recalcular-score', ...comPerfil, leads.recalcularScores);
+rotas.post('/leads/:id/enriquecer', ...comPerfil, enriquecimento.enriquecer);
+rotas.post('/leads/:id/calcular-score', ...comPerfil, leads.calcularScore);
 rotas.get('/leads/:id', ...comPerfil, leads.obter);
 rotas.put('/leads/:id', ...comPerfil, leads.atualizar);
 rotas.delete('/leads/:id', ...comPerfil, leads.excluir);
+
+// O arquivo só é recebido depois de conferir token e perfil.
+rotas.post('/importacoes/preview', ...comPerfil, receberPlanilha, importacoes.preview);
+rotas.post('/importacoes', ...comPerfil, receberPlanilha, importacoes.importar);
+rotas.get('/importacoes', ...comPerfil, importacoes.listar);
+rotas.get('/importacoes/:id', ...comPerfil, importacoes.obter);
