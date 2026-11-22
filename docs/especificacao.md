@@ -145,6 +145,14 @@ Obrigatórios no mapeamento: `cnpj` e `nome_lead`. A avaliação do lead (seçã
 7. **Nunca aceitar do cliente:** `id`, `organizacao_id`, campos de score, campos de enriquecimento e da fila, `created_at`, `updated_at`. Os updates usam lista branca de campos.
 8. **Papéis:** `admin` pode editar configurações da organização e gerenciar membros e convites; `membro` trabalha com os leads.
 9. **Endurecimento:** CORS restrito ao domínio do frontend, limite de tamanho (5 MB) e de formato no upload, limite de taxa na API (`express-rate-limit`) e validação de todas as entradas no backend.
+   - **Limites de taxa por usuário logado,** e não por IP. No Render as requisições passam por proxies em número não garantido, e um IP errado faria todos dividirem o mesmo limite. Rotas públicas não têm limite de taxa: sem token válido, a resposta é 401 sem tocar no banco.
+     - uso geral: 300 requisições a cada 5 minutos;
+     - importação (preview e confirmação), enfileirar a Receita em lote e recalcular todos: 30 a cada 15 minutos;
+     - convites: 20 por hora;
+     - acima disso, a API responde 429 com `{ erro }` e o cabeçalho `RateLimit`.
+   - **Cabeçalhos da API:** `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` e `Referrer-Policy: no-referrer`.
+   - **Cabeçalhos do frontend:** em `frontend/public/_headers`, com os mesmos cuidados contra iframe e sniffing, além de `Permissions-Policy` e cache longo para `/assets/*`.
+   - **CORS:** `CORS_ORIGIN` e `FRONTEND_URL` são lidos sem a barra final.
 10. **Recomendação futura (defesa em profundidade):** políticas RLS de leitura baseadas em `perfis`, caso o frontend venha a consultar o Supabase direto.
 
 ## 6. Cadastro, onboarding e convites
@@ -714,15 +722,22 @@ O Supabase sozinho não hospeda o backend Express: ele oferece banco, autentica�
 
 | Parte | Serviço (plano gratuito) | Observação |
 | --- | --- | --- |
-| Banco e autenticação | Supabase Free | O projeto é pausado após cerca de 1 semana sem uso; basta reativar no painel |
-| Backend | Render (Web Service Free) | "Dorme" após ~15 min sem requisições e leva ~1 min para acordar; a fila retoma sozinha (seção 9) |
-| Frontend | Cloudflare Pages ou Vercel (Hobby) | Site estático gerado pelo Vite |
+| Banco e autenticação | Supabase Free | O projeto é pausado após cerca de 1 semana sem uso; basta reativar no painel. Sem backup automático: backup manual com o CLI |
+| Backend | Render (Web Service Free), configurado em `render.yaml` | "Dorme" após ~15 min sem requisições e leva ~1 min para acordar; a fila retoma sozinha (seção 9). 750 horas por mês por conta |
+| Frontend | Cloudflare Workers com arquivos estáticos (Free), configurado em `frontend/wrangler.jsonc` | Site estático gerado pelo Vite, com fallback de SPA para o React Router |
 
-Os limites dos planos gratuitos mudam; conferir as condições atuais na fase 11, antes de publicar. Alternativa ao Render, caso mude: Koyeb (plano gratuito).
+Condições conferidas em 21/11/2026 (fase 12):
+
+- **Cloudflare:** a própria Cloudflare recomenda Workers, e não mais Pages, para projetos novos. Os acessos a arquivos estáticos são gratuitos e sem limite.
+- **Vercel Hobby:** foi descartada porque o plano não permite uso comercial.
+- **Render:** a verificação de saúde usa `/`, que não consulta o banco, para um Supabase pausado não derrubar o deploy.
+- **Tempo-limite do frontend:** é de 90 s para cobrir o tempo do Render acordando. Com o tempo esgotado, a mensagem explica que o servidor pode estar acordando.
+
+Passo a passo de publicação, atualização e backups em [deploy.md](deploy.md). Alternativa ao Render, caso mude: Koyeb (plano gratuito).
 
 ## 13. Variáveis de ambiente
 
-**Backend:** `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `PORT` (padrão 3000), `CORS_ORIGIN` (uma ou mais origens separadas por vírgula), `FRONTEND_URL` (endereço do frontend usado no link dos e-mails de convite). O servidor não sobe se faltar alguma obrigatória.
+**Backend:** `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `PORT` (padrão 3000), `CORS_ORIGIN` (uma ou mais origens separadas por vírgula), `FRONTEND_URL` (endereço do frontend usado no link dos e-mails de convite). O servidor não sobe se faltar alguma obrigatória. `NODE_ENV=test` (só nos testes automatizados) desliga os limites de taxa; no Render é `production`.
 
 **Frontend:** `VITE_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
