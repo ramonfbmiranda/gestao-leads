@@ -1,6 +1,8 @@
 // Mapa de rotas. Acesso conforme a especificação (seção 10):
-// público, só token (autenticar), com perfil (comPerfil) ou admin (somenteAdmin).
+// público, só token (comToken), com perfil (comPerfil) ou admin (somenteAdmin).
 // O middleware vai em cada rota, nunca em router.use, para não vazar para outras.
+// Todas as rotas com token contam no limite de uso; as pesadas e os convites
+// têm um limite próprio a mais (seção 5, item 9).
 
 import { Router } from 'express';
 import * as avaliacao from '../controllers/avaliacaoController.js';
@@ -14,7 +16,8 @@ import * as membros from '../controllers/membrosController.js';
 import * as organizacao from '../controllers/organizacaoController.js';
 import * as responsaveis from '../controllers/responsaveisController.js';
 import * as sistema from '../controllers/sistemaController.js';
-import { autenticar, comPerfil, somenteAdmin } from '../middlewares/autenticacao.js';
+import { comPerfil, comToken, somenteAdmin } from '../middlewares/autenticacao.js';
+import { limitarConvites, limitarPesado } from '../middlewares/limites.js';
 import { receberPlanilha } from '../middlewares/upload.js';
 
 export const rotas = Router();
@@ -24,15 +27,15 @@ rotas.get('/', sistema.inicio);
 rotas.get('/saude', sistema.saude);
 
 // Só token: o usuário pode ainda não ter organização
-rotas.get('/me', autenticar, conta.me);
-rotas.post('/onboarding', autenticar, conta.onboarding);
-rotas.post('/convites/:id/aceitar', autenticar, conta.aceitarConvite);
+rotas.get('/me', ...comToken, conta.me);
+rotas.post('/onboarding', ...comToken, conta.onboarding);
+rotas.post('/convites/:id/aceitar', ...comToken, conta.aceitarConvite);
 
 // Admin
 rotas.put('/organizacao', ...somenteAdmin, organizacao.atualizar);
 rotas.get('/organizacao/sugestao-pesos', ...somenteAdmin, organizacao.sugestaoPesos);
 rotas.get('/membros', ...somenteAdmin, membros.listarMembros);
-rotas.post('/membros/convite', ...somenteAdmin, membros.convidar);
+rotas.post('/membros/convite', ...somenteAdmin, limitarConvites, membros.convidar);
 rotas.get('/convites', ...somenteAdmin, membros.listarConvites);
 rotas.delete('/convites/:id', ...somenteAdmin, membros.cancelarConvite);
 
@@ -48,8 +51,8 @@ rotas.get('/dashboard/conversao', ...comPerfil, dashboard.conversao);
 rotas.get('/leads', ...comPerfil, leads.listar);
 rotas.post('/leads', ...comPerfil, leads.criar);
 rotas.get('/leads/enriquecimento/status', ...comPerfil, enriquecimento.status);
-rotas.post('/leads/enriquecer-lote', ...comPerfil, enriquecimento.enfileirar);
-rotas.post('/leads/recalcular-score', ...comPerfil, leads.recalcularScores);
+rotas.post('/leads/enriquecer-lote', ...comPerfil, limitarPesado, enriquecimento.enfileirar);
+rotas.post('/leads/recalcular-score', ...comPerfil, limitarPesado, leads.recalcularScores);
 rotas.get('/leads/prioridade', ...comPerfil, leads.prioridade);
 rotas.post('/leads/:id/enriquecer', ...comPerfil, enriquecimento.enriquecer);
 rotas.post('/leads/:id/calcular-score', ...comPerfil, leads.calcularScore);
@@ -62,7 +65,7 @@ rotas.put('/leads/:id', ...comPerfil, leads.atualizar);
 rotas.delete('/leads/:id', ...comPerfil, leads.excluir);
 
 // O arquivo só é recebido depois de conferir token e perfil.
-rotas.post('/importacoes/preview', ...comPerfil, receberPlanilha, importacoes.preview);
-rotas.post('/importacoes', ...comPerfil, receberPlanilha, importacoes.importar);
+rotas.post('/importacoes/preview', ...comPerfil, limitarPesado, receberPlanilha, importacoes.preview);
+rotas.post('/importacoes', ...comPerfil, limitarPesado, receberPlanilha, importacoes.importar);
 rotas.get('/importacoes', ...comPerfil, importacoes.listar);
 rotas.get('/importacoes/:id', ...comPerfil, importacoes.obter);

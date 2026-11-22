@@ -9,6 +9,17 @@ export function criarApp() {
   const app = express();
 
   app.disable('x-powered-by');
+  // A API só devolve JSON com dados da organização: nada de cache, de
+  // interpretar como outro tipo ou de abrir dentro de outra página.
+  app.use((req, res, next) => {
+    res.set({
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+    });
+    next();
+  });
   app.use(cors({ origin: ambiente.corsOrigin }));
   app.use(express.json({ limit: '100kb' }));
 

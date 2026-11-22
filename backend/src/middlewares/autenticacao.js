@@ -2,6 +2,7 @@ import { isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { supabase } from '../config/supabase.js';
 import { buscarPerfil } from '../services/contaService.js';
 import { ErroHttp, acessoNegado, naoAutenticado } from '../utils/erros.js';
+import { limitarUso } from './limites.js';
 
 /**
  * Valida o token "Authorization: Bearer <access_token>" do Supabase Auth.
@@ -53,9 +54,11 @@ export function exigirAdmin(req, res, next) {
   next();
 }
 
-// Combinações usadas nas rotas (legenda da especificação, seção 10).
-export const comPerfil = [autenticar, exigirPerfil];
-export const somenteAdmin = [autenticar, exigirPerfil, exigirAdmin];
+// Combinações usadas nas rotas (legenda da especificação, seção 10). O limite
+// de uso vem logo depois do token, porque conta por usuário.
+export const comToken = [autenticar, limitarUso];
+export const comPerfil = [autenticar, limitarUso, exigirPerfil];
+export const somenteAdmin = [autenticar, limitarUso, exigirPerfil, exigirAdmin];
 
 function servicoAuthIndisponivel() {
   return new ErroHttp(503, 'Serviço de autenticação indisponível');

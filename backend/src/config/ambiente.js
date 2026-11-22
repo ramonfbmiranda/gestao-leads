@@ -3,6 +3,8 @@
 
 const OBRIGATORIAS = ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'CORS_ORIGIN', 'FRONTEND_URL'];
 
+const semBarraFinal = (texto) => texto.replace(/\/+$/, '');
+
 export function carregarAmbiente(env = process.env) {
   const faltando = OBRIGATORIAS.filter((nome) => !env[nome]?.trim());
   if (faltando.length > 0) {
@@ -18,9 +20,12 @@ export function carregarAmbiente(env = process.env) {
     supabaseUrl: env.SUPABASE_URL.trim(),
     supabaseSecretKey: env.SUPABASE_SECRET_KEY.trim(),
     porta,
-    // Aceita uma ou mais origens separadas por vírgula.
-    corsOrigin: env.CORS_ORIGIN.split(',').map((origem) => origem.trim()).filter(Boolean),
-    frontendUrl: env.FRONTEND_URL.trim(),
+    // Aceita uma ou mais origens separadas por vírgula. A barra final sai: o
+    // navegador envia a origem sem ela, e com ela o CORS recusaria tudo.
+    corsOrigin: env.CORS_ORIGIN.split(',').map((origem) => semBarraFinal(origem.trim())).filter(Boolean),
+    frontendUrl: semBarraFinal(env.FRONTEND_URL.trim()),
+    // Só os testes automatizados desligam os limites de requisições.
+    limitesDesligados: env.NODE_ENV === 'test',
   };
 }
 

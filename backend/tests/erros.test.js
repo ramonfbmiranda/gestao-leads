@@ -55,4 +55,16 @@ describe('carregarAmbiente', () => {
   it('recusa porta inválida', () => {
     expect(() => carregarAmbiente({ ...completo, PORT: 'abc' })).toThrow('PORT');
   });
+
+  it('tira a barra final das origens e do endereço do frontend', () => {
+    const ambiente = carregarAmbiente({ ...completo, CORS_ORIGIN: 'https://app.exemplo.com/', FRONTEND_URL: 'https://app.exemplo.com//' });
+    expect(ambiente.corsOrigin).toEqual(['https://app.exemplo.com']);
+    expect(ambiente.frontendUrl).toBe('https://app.exemplo.com');
+  });
+
+  it('limites de requisições só ficam desligados nos testes', () => {
+    expect(carregarAmbiente(completo).limitesDesligados).toBe(false);
+    expect(carregarAmbiente({ ...completo, NODE_ENV: 'production' }).limitesDesligados).toBe(false);
+    expect(carregarAmbiente({ ...completo, NODE_ENV: 'test' }).limitesDesligados).toBe(true);
+  });
 });

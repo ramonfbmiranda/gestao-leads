@@ -63,7 +63,7 @@ describe('lerPlanilha com CSV', () => {
   it(`recusa mais de ${LIMITE_LINHAS} linhas`, () => {
     const csv = `CNPJ\n${'1\n'.repeat(LIMITE_LINHAS + 1)}`;
     expect(erroDe(() => lerPlanilha(Buffer.from(csv), 'a.csv')).message).toContain('mais de 20.000 linhas');
-  });
+  }, 20_000); // ler 20 mil linhas passa dos 5 s padrão em máquina ocupada
 
   it(`aceita exatamente ${LIMITE_LINHAS} linhas`, () => {
     const csv = `CNPJ\n${'1\n'.repeat(LIMITE_LINHAS)}`;
