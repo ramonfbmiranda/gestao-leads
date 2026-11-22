@@ -73,4 +73,9 @@ describe('converterErro', () => {
   it('sem resposta é falta de conexão (status 0)', () => {
     expect(converterErro(new Error('Network Error'))).toMatchObject({ status: 0, message: expect.stringContaining('conexão') });
   });
+
+  it('tempo esgotado explica que o servidor pode estar acordando', () => {
+    const erro = converterErro(Object.assign(new Error('timeout of 90000ms exceeded'), { code: 'ECONNABORTED' }));
+    expect(erro).toMatchObject({ status: 0, message: expect.stringContaining('acordar') });
+  });
 });

@@ -16,6 +16,9 @@ export class ErroApi extends Error {
 export function converterErro(erro) {
   if (erro instanceof ErroApi) return erro;
   const resposta = erro?.response;
+  if (!resposta && (erro?.code === 'ECONNABORTED' || erro?.code === 'ETIMEDOUT')) {
+    return new ErroApi(0, 'O servidor demorou para responder. Depois de um tempo parado ele leva até 1 minuto para acordar: tente de novo.');
+  }
   if (!resposta) return new ErroApi(0, 'Sem conexão com o servidor. Confira sua internet e tente de novo.');
   const mensagem = resposta.data?.erro ?? 'Algo deu errado. Tente de novo em instantes.';
   return new ErroApi(resposta.status, mensagem);
@@ -94,7 +97,8 @@ export function criarApi(cliente) {
 }
 
 function criarCliente() {
-  const cliente = axios.create({ baseURL: ambiente?.apiUrl, timeout: 30_000 });
+  // 90 s: no plano gratuito do Render o backend dorme sem uso e leva ~1 min para acordar.
+  const cliente = axios.create({ baseURL: ambiente?.apiUrl, timeout: 90_000 });
   cliente.interceptors.request.use(async (config) => {
     const { data } = (await supabase?.auth.getSession()) ?? { data: {} };
     const token = data?.session?.access_token;

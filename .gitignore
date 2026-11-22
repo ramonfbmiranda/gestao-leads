@@ -17,6 +17,9 @@ supabase/.branches/
 .vercel/
 .wrangler/
 
+# Backups do banco: dados reais de empresas e contatos (LGPD)
+backups/
+
 # Planilhas de leads: dados reais de empresas e contatos (LGPD)
 *.xlsx
 *.xls

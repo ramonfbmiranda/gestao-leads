@@ -1,0 +1,29 @@
+# Backend (API Express) no Render, plano gratuito. Guia em docs/deploy.md.
+# Os segredos não ficam aqui: as variáveis com "sync: false" são pedidas pelo
+# painel na criação do serviço.
+services:
+  - type: web
+    name: gestao-leads-api
+    runtime: node
+    plan: free
+    # Não há região na América do Sul; Virgínia (leste dos EUA) é a mais próxima.
+    region: virginia
+    rootDir: backend
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    # "/" responde sem consultar o banco: um Supabase pausado não derruba o deploy.
+    healthCheckPath: /
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

@@ -1,0 +1,11 @@
+// Frontend na Cloudflare (Workers com arquivos estáticos, plano gratuito).
+// Guia em docs/deploy.md. Só serve o que o "vite build" gera em dist/;
+// qualquer rota desconhecida devolve o index.html, para o React Router.
+{
+  "name": "gestao-leads",
+  "compatibility_date": "2026-11-21",
+  "assets": {
+    "directory": "./dist/",
+    "not_found_handling": "single-page-application"
+  }
+}
