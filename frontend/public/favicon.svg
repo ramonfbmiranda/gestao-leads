@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="4 4 40 40">
+  <!-- Mesmo desenho do componente Logo (src/componentes/ui.jsx); manter os dois iguais. -->
+  <style>
+    .baixa { color: #86b6ef; }
+    .media { color: #3987e5; }
+    .alta { color: #184f95; }
+    @media (prefers-color-scheme: dark) {
+      .baixa { color: #1c5cab; }
+      .alta { color: #9ec5f4; }
+    }
+  </style>
+  <g fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+    <path class="baixa" d="M5.25 31A18.75 18.75 0 0 1 12.769 15.987L14.716 18.589A15.5 15.5 0 0 0 8.5 31Z" />
+    <path class="media" d="M16.614 13.767A18.75 18.75 0 0 1 31.386 13.767L30.105 16.754A15.5 15.5 0 0 0 17.895 16.754Z" />
+    <path class="alta" d="M35.231 15.987A18.75 18.75 0 0 1 42.75 31L39.5 31A15.5 15.5 0 0 0 33.284 18.589Z" />
+  </g>
+  <g fill="currentColor">
+    <rect class="baixa" x="15" y="30" width="4.8" height="6" rx="1.4" />
+    <rect class="media" x="21.6" y="27" width="4.8" height="9" rx="1.4" />
+    <rect class="alta" x="28.2" y="24" width="4.8" height="12" rx="1.4" />
+  </g>
+</svg>

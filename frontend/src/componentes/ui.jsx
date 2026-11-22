@@ -57,17 +57,21 @@ export function Aviso({ tipo = 'aviso', children, className = '' }) {
   );
 }
 
+// Medidor de três faixas com barras de sinal, nas cores da escala do Potencial
+// (que se invertem no tema escuro). Mesmo desenho de public/favicon.svg.
 export function Logo({ tamanho = 30 }) {
   return (
-    <span
-      className="inline-flex items-center justify-center rounded-lg bg-tinta text-sobre-tinta"
-      style={{ width: tamanho, height: tamanho }}
-    >
-      <svg width={tamanho * 0.6} height={tamanho * 0.6} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M4 18a8 8 0 1 1 16 0" />
-        <path d="M12 18l4-6" />
-      </svg>
-    </span>
+    <svg width={tamanho} height={tamanho} viewBox="4 4 40 40" className="shrink-0" aria-hidden="true">
+      {/* Traço da mesma cor só para arredondar os cantos de cada faixa. */}
+      <g strokeWidth="2" strokeLinejoin="round">
+        <path className="fill-pot-baixa stroke-pot-baixa" d="M5.25 31A18.75 18.75 0 0 1 12.769 15.987L14.716 18.589A15.5 15.5 0 0 0 8.5 31Z" />
+        <path className="fill-pot-media stroke-pot-media" d="M16.614 13.767A18.75 18.75 0 0 1 31.386 13.767L30.105 16.754A15.5 15.5 0 0 0 17.895 16.754Z" />
+        <path className="fill-pot-alta stroke-pot-alta" d="M35.231 15.987A18.75 18.75 0 0 1 42.75 31L39.5 31A15.5 15.5 0 0 0 33.284 18.589Z" />
+      </g>
+      <rect className="fill-pot-baixa" x="15" y="30" width="4.8" height="6" rx="1.4" />
+      <rect className="fill-pot-media" x="21.6" y="27" width="4.8" height="9" rx="1.4" />
+      <rect className="fill-pot-alta" x="28.2" y="24" width="4.8" height="12" rx="1.4" />
+    </svg>
   );
 }
 
