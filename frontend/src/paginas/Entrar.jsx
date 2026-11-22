@@ -46,7 +46,7 @@ export function Entrar() {
       <div className="absolute top-4 right-4"><BotaoTema /></div>
 
       <section aria-label="Sobre o sistema" className="flex flex-[1_1_440px] flex-col justify-between gap-9 border-r border-borda bg-superficie-2 px-6 py-12 md:px-14">
-        <div className="flex items-center gap-2.5 text-[17px] font-bold"><Logo tamanho={34} />Gestão de Leads</div>
+        <div className="flex items-center gap-2.5 text-[17px] font-bold"><Logo tamanho={34} />LeadRank</div>
         <div className="flex max-w-[480px] flex-col gap-7">
           <h1 className="text-4xl leading-tight font-bold tracking-tight text-balance">Meça o potencial de cada lead antes de correr atrás dele.</h1>
           <ul className="flex flex-col gap-4">

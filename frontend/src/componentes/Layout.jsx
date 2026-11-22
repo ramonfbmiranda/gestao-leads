@@ -46,7 +46,7 @@ export function Layout() {
     <div className="flex min-h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-borda bg-superficie px-6 py-3">
         <Link to="/" className="flex items-center gap-2.5 text-base font-bold text-texto no-underline">
-          <Logo />Gestão de Leads
+          <Logo />LeadRank
         </Link>
         <div className="flex flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-2 rounded-lg border border-borda px-3 py-1.5 font-medium">

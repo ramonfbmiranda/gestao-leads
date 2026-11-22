@@ -35,7 +35,7 @@ export function PrimeiroAcesso() {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-borda bg-superficie px-6 py-3">
-        <span className="flex items-center gap-2.5 text-base font-bold"><Logo />Gestão de Leads</span>
+        <span className="flex items-center gap-2.5 text-base font-bold"><Logo />LeadRank</span>
         <span className="flex items-center gap-2">
           <span className="text-[13px] text-texto-2">{usuario?.email}</span>
           <BotaoTema />
